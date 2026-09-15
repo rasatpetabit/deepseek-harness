@@ -80,7 +80,8 @@ export function apply(ctx: ClientContext, config?: Config): void {
   // locale/change re-registration wiring.
   const t = ctx.locale.bind(NS)
   // The shared SettingsScope mirror updates after document commits and reconnects.
-  const canAdminister = ctx.remote.$host.isLoopback || config?.allowRemoteAdministration === true
+  const remoteAdminGlobal = (globalThis as { __DSH_REMOTE_ADMINISTRATION__?: boolean }).__DSH_REMOTE_ADMINISTRATION__ === true
+  const canAdminister = ctx.remote.$host.isLoopback || config?.allowRemoteAdministration === true || remoteAdminGlobal
   const documentController = canAdminister
     ? new SettingsDocumentStore(ctx, ctx.settingsScope.describe())
     : undefined

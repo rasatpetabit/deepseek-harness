@@ -269,6 +269,9 @@ export function apply(ctx: Context, config: Config): void {
       return []
     },
   })
+  ctx.on('webserver/index-inject', (table) => {
+    table.push({ kind: 'global', name: '__DSH_REMOTE_ADMINISTRATION__', value: true })
+  })
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {

@@ -451,4 +451,14 @@ describe('web-app runtime glue', () => {
     const untrustedReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: 'evil.com:3080' } } as unknown as IncomingMessage
     expect(policy.authorize(untrustedReq)).toEqual({ authorized: false, reason: 'forbidden' })
   })
+
+  it('injects __DSH_REMOTE_ADMINISTRATION__ into webserver index injections', () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer('0.0.0.0').server)
+    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+    const table: unknown[] = []
+    ctx.emit('webserver/index-inject', table as never)
+    expect(table).toContainEqual({ kind: 'global', name: '__DSH_REMOTE_ADMINISTRATION__', value: true })
+  })
 })

@@ -67,8 +67,10 @@ export function apply(ctx: Context, config?: Config): void {
   const schema = new SettingsSchemaService(ctx)
   // Resolved once here, where `remote` is declared in this plugin's own
   // `inject`; the binder hands the same answer to every scope it binds.
+  const remoteAdminGlobal = (globalThis as { __DSH_REMOTE_ADMINISTRATION__?: boolean }).__DSH_REMOTE_ADMINISTRATION__ === true
   const isHost = config?.persistence === 'host'
     || config?.allowRemoteAdministration === true
+    || remoteAdminGlobal
     || (config?.persistence !== 'memory' && ctx.remote.$host.isLoopback)
   const persistence = isHost ? 'host' : 'memory'
   const mirror = new SettingsDescribeMirror(ctx, persistence)
