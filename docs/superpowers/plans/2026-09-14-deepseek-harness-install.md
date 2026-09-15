@@ -217,7 +217,8 @@ ACTIVE_TARGET=$(readlink "$PROD_ROOT/current")
 ACTIVE_RELEASE=$(basename "$ACTIVE_TARGET")
 
 cd "$RELEASES_DIR"
-mapfile -t ALL_RELEASES < <(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' -printf '%f\n' | sort -r)
+RAW_RELEASES=$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' -printf '%f\n' | sort -r)
+mapfile -t ALL_RELEASES <<< "$RAW_RELEASES"
 
 if [ "${#ALL_RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
   for ((i=KEEP_RELEASES; i<${#ALL_RELEASES[@]}; i++)); do
