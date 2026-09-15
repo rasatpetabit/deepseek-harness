@@ -9,7 +9,7 @@ KEEP_RELEASES=3
 # Validate that production roots do not resolve into /srv/dev
 PROD_REAL=$(realpath -m "$PROD_ROOT")
 RELEASES_REAL=$(realpath -m "$RELEASES_DIR")
-if [[ "$PROD_REAL" =~ ^/srv/dev ]] || [[ "$RELEASES_REAL" =~ ^/srv/dev ]]; then
+if [[ "$PROD_REAL" == "/srv/dev" || "$PROD_REAL" == /srv/dev/* || "$RELEASES_REAL" == "/srv/dev" || "$RELEASES_REAL" == /srv/dev/* ]]; then
   echo "ERROR: Production root resolves into /srv/dev (prod: $PROD_REAL, releases: $RELEASES_REAL)" >&2
   exit 1
 fi
