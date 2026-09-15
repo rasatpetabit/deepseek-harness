@@ -8,8 +8,9 @@ KEEP_RELEASES=3
 
 # Validate that production roots do not resolve into /srv/dev
 PROD_REAL=$(realpath -m "$PROD_ROOT")
-if [[ "$PROD_REAL" =~ ^/srv/dev ]]; then
-  echo "ERROR: Production root $PROD_ROOT resolves into /srv/dev -> $PROD_REAL" >&2
+RELEASES_REAL=$(realpath -m "$RELEASES_DIR")
+if [[ "$PROD_REAL" =~ ^/srv/dev ]] || [[ "$RELEASES_REAL" =~ ^/srv/dev ]]; then
+  echo "ERROR: Production root resolves into /srv/dev (prod: $PROD_REAL, releases: $RELEASES_REAL)" >&2
   exit 1
 fi
 
@@ -45,9 +46,10 @@ cleanup() {
     rm -rf "$STAGING_DIR"
   fi
   if [ "$TARGET_CREATED" -eq 1 ]; then
-    local current_real
+    local current_real target_real
     current_real=$(realpath "$PROD_ROOT/current" 2>/dev/null || true)
-    if [ "$current_real" != "$TARGET_DIR" ]; then
+    target_real=$(realpath "$TARGET_DIR" 2>/dev/null || true)
+    if [ -n "$target_real" ] && [ "$current_real" != "$target_real" ]; then
       rm -rf "$TARGET_DIR"
     fi
   fi
@@ -90,15 +92,25 @@ mv -T "$STAGING_DIR" "$TARGET_DIR"
 TARGET_CREATED=1
 
 # 3. Validate production boundary on final release tree:
-# Fail closed: every symlink must resolve strictly INSIDE $TARGET_DIR.
+# Fail closed: target root and every descendant symlink must resolve strictly INSIDE $TARGET_DIR.
 # Any link outside the release directory (or failing resolution) aborts immediately.
 python3 - << PYEOF
 import os, sys
 from pathlib import Path
 
 target = Path("$TARGET_DIR")
+dev_tree = Path("/srv/dev")
 violations = []
 checked_links = 0
+
+try:
+    target_real = target.resolve(strict=True)
+    if target_real.is_relative_to(dev_tree):
+        print(f"ERROR: Target directory itself resolves into /srv/dev: {target_real}", file=sys.stderr)
+        sys.exit(1)
+except Exception as exc:
+    print(f"ERROR: Cannot resolve target directory {target}: {exc}", file=sys.stderr)
+    sys.exit(2)
 
 def on_error(err):
     print(f"ERROR: Traversal error: {err}", file=sys.stderr)
