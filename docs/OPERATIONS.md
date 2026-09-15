@@ -25,18 +25,15 @@ sudo systemctl start dsh.service
 journalctl -u dsh.service -n 50 --no-pager
 ```
 
-## 3. Obtaining the Authentication / Login URL
+## 3. Web Access & Automatic VPN/LAN Authentication
 
-DSH requires a launch token for Web GUI access. Unauthenticated requests to `/` receive HTTP 401. To retrieve the active authentication URL with token:
+Direct browser access is fully automated for the private VPN/LAN network:
 
-```bash
-journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
-```
-
-This prints both the loopback URL (`http://127.0.0.1:3080/?token=...`) and LAN URL (`http://<lan-ip>:3080/?token=...`).
-
-> **The LAN URL gives you chat, not Settings.** See section 4 before administering
-> models or OAuth from another machine.
+- **Automatic Login on VPN/LAN:** When navigating to `http://192.168.100.177:3080/` from any device on `192.168.100.0/24`, the server recognizes the trusted subnet, automatically mints a signed 30-day session cookie, and logs you into the Web GUI with zero manual token steps.
+- **Manual Launch Token (Off-subnet):** If connecting from outside the configured `trustedNetworks`, visiting `/` requires the launch token printed at startup:
+  ```bash
+  journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
+  ```
 
 ## 4. Remote Web Access (LAN & VPN)
 
@@ -54,13 +51,15 @@ In our custom web bundle composition:
 
 ### 4.2 Logging in from your Browser
 
-1. Retrieve the active LAN login URL from systemd journal:
-   ```bash
-   journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
-   ```
-2. Open the printed `http://<lan-ip>:3080/?token=...` URL in your browser.
-3. The server exchanges the token for a session cookie and redirects to `/`.
-4. Navigate to **Settings → Models** to configure providers and models, or **Settings → Coding OAuth** to log in to Grok, Codex, Kimi, or Claude Code.
+Simply navigate directly to the application in your browser:
+
+```
+http://192.168.100.177:3080/
+```
+
+- When connecting from your workstation on the VPN/LAN, you are automatically logged in.
+- Navigate to **Settings → Models** to configure providers and models.
+- Navigate to **Settings → Coding OAuth** to view or toggle subscription capabilities.
 
 ```bash
 DSH_HOME=/srv/deepseek-harness/data /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js plugin --profile web exec dsh-coding-oauth login codex
