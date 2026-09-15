@@ -167,13 +167,16 @@ try:
     candidates = []
     for entry in os.scandir(releases_dir):
         if entry.is_dir() and not entry.name.startswith("."):
-            candidates.append((entry.stat().st_mtime, entry.path))
+            candidates.append((entry.stat().st_mtime, entry.name, entry.path))
 
-    # Sort newest-first by mtime
-    candidates.sort(key=lambda x: x[0], reverse=True)
+    # Newest-first by mtime, tie-broken by release id. Ids begin with a UTC
+    # timestamp, so id order is chronological. Without the tie-break, equal
+    # mtimes fall back to os.scandir order - filesystem hash order, which can
+    # retain an older release while pruning a newer one.
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
     # Exclude active release from pruning candidates, keeping newest (keep - 1) rollback releases
-    non_active = [(mtime, p) for mtime, p in candidates if os.path.realpath(p) != active_real]
-    for mtime, path in non_active[max(0, keep - 1):]:
+    non_active = [c for c in candidates if os.path.realpath(c[2]) != active_real]
+    for _mtime, _name, path in non_active[max(0, keep - 1):]:
         print(f"Pruning older release: {path}")
         shutil.rmtree(path)
 except Exception as e:
