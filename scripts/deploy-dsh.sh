@@ -75,11 +75,13 @@ mkdir -p "$STAGING_DIR"
 # 1. Populate source strictly from clean git archive of HEAD
 git archive HEAD | tar -x -C "$STAGING_DIR"
 
-# 2. Overlay verified build outputs and node_modules from workspace
+# 2. Overlay verified build outputs, native addons, and node_modules from workspace
 rsync -a \
   --include='*/' \
   --include='dist/***' \
   --include='lib/***' \
+  --include='bin/***' \
+  --include='native/***' \
   --include='node_modules/***' \
   --exclude='*' \
   "$DEV_ROOT/" "$STAGING_DIR/"
