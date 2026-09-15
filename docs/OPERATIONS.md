@@ -130,7 +130,7 @@ CLI, which forwards to pnpm in the profile directory:
 # Install or pin a plugin version (exact pin via --save-exact)
 DSH_HOME=/srv/deepseek-harness/data \
   /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js \
-  plugin --profile web add --save-exact dsh-coding-subscription-oauth@<version>
+  plugin --profile web add --save-exact dsh-plugin-subscriptions@<version>
 
 sudo systemctl restart dsh.service
 ```
@@ -156,10 +156,22 @@ curl -s -b /tmp/dsh-cookie -X POST -H 'Host: 127.0.0.1:3080' \
 # pass: failures array is [] and every expected provider group lists models
 ```
 
-Currently installed: `dsh-coding-subscription-oauth@0.8.5` (exact pin).
-The plugin's credential files (`/srv/deepseek-harness/data/.*-auth.json`) are
-owned by the plugin and format-migrated by it on version changes; they are
-not touched by `deploy-dsh.sh`. Back them up before any plugin downgrade.
+Currently installed: `dsh-plugin-subscriptions@0.9.2` (exact pin;
+upstream `V1ki/dsh-plugin-subscriptions`). It registers five
+subscription-OAuth routes — `codex`, `claude`, `grok`, `copilot`,
+`antigravity` — through `dsh-llm`'s stable `registerAdapter` contract (it
+does **not** use `llm-pi-ai`, so the rc-line profile-field breakages that
+hit `llm-pi-ai`-based plugins do not apply). Verify the routes with the
+catalog check above: `routableProviders` must list all five. There is **no
+Kimi route** — Kimi models are served through the LiteLLM provider
+(`kimi-k3`, `k3-256k` via the local proxy).
+
+**Credentials.** The plugin keeps one shared `.credentials.json` in
+`DSH_HOME` (`/srv/deepseek-harness/data/.credentials.json`), shared across
+profiles. Log in per route via the web UI **Settings → Subscriptions** —
+remote settings administration is enabled for the trusted LAN (§5), so this
+works from a VPN browser. Back up `.credentials.json` before any plugin
+downgrade.
 
 ## 7. Rollback
 
