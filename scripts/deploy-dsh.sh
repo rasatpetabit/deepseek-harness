@@ -59,7 +59,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "Rebuilding clean workspace artifacts for $GIT_SHA..."
+echo "Reconciling dependencies and rebuilding clean workspace artifacts for $GIT_SHA..."
+pnpm install --frozen-lockfile
 pnpm run build
 
 # Verify worktree remained pristine throughout the build
@@ -145,6 +146,12 @@ mv -Tf "$TEMP_LINK" "$PROD_ROOT/current"
 PROMOTED=1
 echo "Active release promoted to $RELEASE_ID."
 
+# Restart service immediately following promotion
+if systemctl is-enabled --quiet dsh.service 2>/dev/null || systemctl is-active --quiet dsh.service 2>/dev/null; then
+  echo "Restarting dsh.service to active release..."
+  sudo systemctl restart dsh.service
+fi
+
 # Bounded release retention per /srv/AGENTS.md: mtime newest-first, protected active release
 python3 - << PYEOF
 import os, shutil, sys
@@ -168,13 +175,7 @@ try:
         print(f"Pruning older release: {path}")
         shutil.rmtree(path)
 except Exception as e:
-    print(f"ERROR during release retention: {e}", file=sys.stderr)
-    sys.exit(1)
+    print(f"WARNING: Release retention encountered an error (service remains active on $RELEASE_ID): {e}", file=sys.stderr)
 PYEOF
-
-if systemctl is-enabled --quiet dsh.service 2>/dev/null || systemctl is-active --quiet dsh.service 2>/dev/null; then
-  echo "Restarting dsh.service..."
-  sudo systemctl restart dsh.service
-fi
 
 echo "Deploy complete: $RELEASE_ID"
