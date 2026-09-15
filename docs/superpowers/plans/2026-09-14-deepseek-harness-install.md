@@ -4,7 +4,7 @@
 
 **Goal:** Install DeepSeek Harness in `/srv/dev/ai/deepseek-harness`, build from source, deploy to `/srv/deepseek-harness`, configure `0.0.0.0` network binding, install `dsh-coding-subscription-oauth`, and configure an enabled systemd autostart service.
 
-**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<timestamp>-<git-sha>` via staging and atomic symlink promotion with persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
+**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<timestamp>-<git-sha>` via git archive staging and atomic symlink promotion with persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
 
 **Tech Stack:** Node.js v22.22.1, pnpm v10.34.5, Cordis plugin system, systemd, TypeScript, tsdown, rolldown, Vite.
 
@@ -106,7 +106,7 @@ chmod 755 /srv/deepseek-harness
 chmod 700 /srv/deepseek-harness/data
 ```
 
-- [ ] **Step 2: Create automated deploy & upgrade script with staging, boundary validation, and cleanup traps**
+- [ ] **Step 2: Create automated deploy & upgrade script with clean committed snapshot, boundary validation, and cleanup traps**
 
 Write `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`:
 ```bash
@@ -142,58 +142,51 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Staging DeepSeek Harness release $RELEASE_ID..."
+echo "Staging DeepSeek Harness release $RELEASE_ID from committed snapshot..."
 mkdir -p "$STAGING_DIR"
 
-# Copy built workspace excluding VCS and development session caches
+# 1. Populate source strictly from clean git archive of HEAD
+git archive HEAD | tar -x -C "$STAGING_DIR"
+
+# 2. Overlay verified build outputs and node_modules from workspace
 rsync -a \
-  --exclude='.git' \
-  --exclude='.pi' \
-  --exclude='docs/superpowers' \
+  --include='*/' \
+  --include='dist/***' \
+  --include='lib/***' \
+  --include='node_modules/***' \
+  --exclude='*' \
   "$DEV_ROOT/" "$STAGING_DIR/"
 
-# Validate production boundary: Fail closed if ANY symlink resolves into /srv/dev
+# 3. Validate production boundary: Fail closed with strict resolution
 python3 - << PYEOF
 import os, sys
+from pathlib import Path
 
-staging = "$STAGING_DIR"
+staging = Path("$STAGING_DIR")
+dev_tree = Path("/srv/dev")
 violations = []
-visited = set()
+checked_links = 0
 
-def audit_path(path):
-    if path in visited:
-        return
-    visited.add(path)
-    if os.path.islink(path):
-        try:
-            target = os.path.realpath(path)
-            if target.startswith("/srv/dev"):
-                violations.append(f"{path} -> {target}")
-            elif os.path.isdir(target):
-                audit_dir(target)
-        except Exception as e:
-            print(f"ERROR: Cannot resolve symlink {path}: {e}", file=sys.stderr)
-            sys.exit(2)
-
-def audit_dir(d):
-    try:
-        entries = os.scandir(d)
-    except Exception as e:
-        print(f"ERROR: Cannot scan directory {d}: {e}", file=sys.stderr)
-        sys.exit(2)
-    for entry in entries:
-        audit_path(entry.path)
-        if entry.is_dir(follow_symlinks=False):
-            audit_dir(entry.path)
-
-audit_dir(staging)
+for root, dirs, files in os.walk(staging):
+    for name in dirs + files:
+        item = Path(root) / name
+        if item.is_symlink():
+            checked_links += 1
+            try:
+                resolved = item.resolve(strict=True)
+                if resolved.is_relative_to(dev_tree):
+                    violations.append(f"{item} -> {resolved}")
+            except Exception as exc:
+                print(f"ERROR: Cannot strictly resolve symlink {item}: {exc}", file=sys.stderr)
+                sys.exit(2)
 
 if violations:
     print(f"ERROR: {len(violations)} production boundary violation(s) found:", file=sys.stderr)
     for v in violations[:10]:
         print(f"  {v}", file=sys.stderr)
     sys.exit(1)
-print("Production boundary check passed: 0 links into /srv/dev.")
+
+print(f"Production boundary check passed: {checked_links} symlinks verified, 0 leaks into /srv/dev.")
 PYEOF
 
 # Move staging into permanent release directory (destination must not exist)
