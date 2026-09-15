@@ -25,15 +25,17 @@ sudo systemctl start dsh.service
 journalctl -u dsh.service -n 50 --no-pager
 ```
 
-## 3. Obtaining the Authentication / Login URL
+## 3. Web UI Access
 
-DSH requires a launch token for Web GUI access. Unauthenticated requests to `/` receive HTTP 401. To retrieve the active authentication URL with token:
+You can open the Web GUI directly in any browser across your network:
 
-```bash
-journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
+```
+http://<host-ip>:3080/
 ```
 
-This prints both the loopback URL (`http://127.0.0.1:3080/?token=...`) and LAN URL (`http://<lan-ip>:3080/?token=...`).
+(e.g., `http://192.168.100.177:3080/` or `http://127.0.0.1:3080/`).
+
+Requests to `/` automatically receive an authority-bound session cookie and load the full DeepSeek Harness interface without requiring one-time launch tokens in the URL.
 
 ## 4. Accessing the Coding Subscription OAuth Plugin
 
