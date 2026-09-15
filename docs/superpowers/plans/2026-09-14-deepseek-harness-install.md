@@ -241,7 +241,7 @@ PYEOF
 
 if systemctl is-enabled --quiet dsh.service 2>/dev/null || systemctl is-active --quiet dsh.service 2>/dev/null; then
   echo "Restarting dsh.service..."
-  sudo systemctl try-restart dsh.service 2>/dev/null || sudo systemctl restart dsh.service
+  sudo systemctl restart dsh.service
 fi
 
 echo "Deploy complete: $RELEASE_ID"
