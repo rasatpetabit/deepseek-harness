@@ -50,4 +50,29 @@ describe('settings domain base plugin', () => {
     await Promise.resolve()
     expect(describeCall).toHaveBeenCalledTimes(1)
   })
+
+  it('respects allowRemoteAdministration: true when host is not loopback', async () => {
+    const describeCall = vi.fn().mockResolvedValue({
+      ok: true, value: { writable: true, hasDocument: true, namespaces: [] },
+    })
+    const ctx = new Context()
+    const remote = new TestRemote(ctx, { settings: { describe: describeCall } })
+    remote.$host = { home: undefined, isLoopback: false }
+    const fiber = ctx.plugin({ inject: [...inject], apply }, { allowRemoteAdministration: true })
+    await fiber.await()
+    expect(ctx.get('settingsScope')).toBeInstanceOf(SettingsScopeBinder)
+    await vi.waitFor(() => { expect(describeCall).toHaveBeenCalledTimes(1) })
+  })
+
+  it('keeps memory persistence when host is not loopback and allowRemoteAdministration is omitted', async () => {
+    const describeCall = vi.fn().mockResolvedValue({
+      ok: true, value: { writable: true, hasDocument: true, namespaces: [] },
+    })
+    const ctx = new Context()
+    const remote = new TestRemote(ctx, { settings: { describe: describeCall } })
+    remote.$host = { home: undefined, isLoopback: false }
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    expect(describeCall).not.toHaveBeenCalled()
+  })
 })

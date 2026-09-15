@@ -12,6 +12,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import type { IncomingMessage } from 'node:http'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { networkInterfaces } from 'node:os'
@@ -70,6 +71,25 @@ export interface WebRuntimeValues {
   lanAddresses: string[]
   /** LAN literals followed by explicit invocation authorities. */
   trustedHosts: string[]
+}
+
+/** Owner-request authorization decision for plugins gating sensitive endpoints. */
+export interface OwnerRequestDecision {
+  readonly authorized: boolean
+  readonly accessMode?: 'loopback' | 'ssh-tunnel' | 'trusted-https-proxy'
+  readonly reason?: string
+}
+
+/** Host owner-request policy providing session-authenticated access to plugin endpoints. */
+export interface OwnerRequestPolicy {
+  authorize(req: IncomingMessage): OwnerRequestDecision
+  diagnostics(): readonly unknown[]
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    ownerRequestPolicy: OwnerRequestPolicy
+  }
 }
 
 /** Environment variable naming the canonical local URL of this Web GUI. */
@@ -230,6 +250,24 @@ export function apply(ctx: Context, config: Config): void {
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  ctx.inject(['connection'], (connectionCtx) => {
+    connectionCtx.provide('ownerRequestPolicy', {
+      authorize(req: IncomingMessage): OwnerRequestDecision {
+        const remote = req.socket?.remoteAddress
+        if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
+          return { authorized: true, accessMode: 'loopback' }
+        }
+        const rejection = connectionCtx.connection.requestRejection(req)
+        if (rejection === undefined) {
+          return { authorized: true, accessMode: 'trusted-https-proxy' }
+        }
+        return { authorized: false, reason: rejection === 401 ? 'unauthorized' : 'forbidden' }
+      },
+      diagnostics() {
+        return []
+      },
+    })
+  })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {
       addHarnessSourceSection(promptCtx, SOURCE_ROOT)

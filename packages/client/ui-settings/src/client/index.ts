@@ -36,6 +36,17 @@ export type {
   SettingsDescribeFace, SettingsDescribeView, SettingsMirrorSnapshot,
 } from './settings-mirror.ts'
 
+/** Configuration for settings scope and host persistence. */
+export interface Config {
+  /**
+   * Whether to allow remote (non-loopback) browser sessions to administer host settings.
+   * When enabled, authenticated browser sessions can view and update settings over the network.
+   */
+  readonly allowRemoteAdministration?: boolean
+  /** Explicit persistence override: 'host' syncs with Host document, 'memory' keeps process-local. */
+  readonly persistence?: 'host' | 'memory'
+}
+
 /**
  * Required services: the Remote namespace the mirror reads through and the
  * forwarded settings invalidation it refreshes on.
@@ -50,12 +61,16 @@ export const inject = ['remote', 'remote.settings']
  * Constructing the service in this plugin's fiber keeps its traced methods
  * bound to each consuming plugin's context.
  * @param ctx - client root context.
+ * @param config - optional {@link Config} for remote administration or persistence.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config?: Config): void {
   const schema = new SettingsSchemaService(ctx)
   // Resolved once here, where `remote` is declared in this plugin's own
   // `inject`; the binder hands the same answer to every scope it binds.
-  const persistence = ctx.remote.$host.isLoopback ? 'host' : 'memory'
+  const isHost = config?.persistence === 'host'
+    || config?.allowRemoteAdministration === true
+    || (config?.persistence !== 'memory' && ctx.remote.$host.isLoopback)
+  const persistence = isHost ? 'host' : 'memory'
   const mirror = new SettingsDescribeMirror(ctx, persistence)
   ctx.effect(() => {
     const disposers = [

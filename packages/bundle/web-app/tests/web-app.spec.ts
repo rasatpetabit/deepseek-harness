@@ -415,4 +415,39 @@ describe('web-app runtime glue', () => {
     await errorAssertion
     expect(errored.listenerCount('close')).toBe(0)
   })
+
+  it('provides ownerRequestPolicy that authorizes authenticated sessions or loopback', async () => {
+    stageDist()
+    const ctx = new Context()
+    const requestRejection = vi.fn().mockReturnValue(undefined)
+    ctx.provide('webServer', fakeHttpServer('0.0.0.0').server)
+    ctx.provide('connection', {
+      authenticatedUrl: (url: string) => url,
+      requestRejection,
+    } as unknown as ConnectionHandle)
+    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const policy = ctx.get('ownerRequestPolicy')
+    expect(policy).toBeDefined()
+    if (!policy) throw new Error('ownerRequestPolicy service missing')
+    expect(policy.diagnostics()).toEqual([])
+
+    // 1. Authenticated session off-loopback
+    const remoteReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: '192.168.1.5:3080' } } as unknown as IncomingMessage
+    expect(policy.authorize(remoteReq)).toEqual({ authorized: true, accessMode: 'trusted-https-proxy' })
+
+    // 2. Loopback TCP socket is always authorized as loopback
+    requestRejection.mockReturnValue(401)
+    const loopbackReq = { socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:3080' } } as unknown as IncomingMessage
+    expect(policy.authorize(loopbackReq)).toEqual({ authorized: true, accessMode: 'loopback' })
+
+    // 3. Unauthenticated off-loopback request is rejected
+    const unauthReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: '192.168.1.5:3080' } } as unknown as IncomingMessage
+    expect(policy.authorize(unauthReq)).toEqual({ authorized: false, reason: 'unauthorized' })
+
+    // 4. Untrusted / cross-site request is rejected as forbidden
+    requestRejection.mockReturnValue(403)
+    const untrustedReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: 'evil.com:3080' } } as unknown as IncomingMessage
+    expect(policy.authorize(untrustedReq)).toEqual({ authorized: false, reason: 'forbidden' })
+  })
 })

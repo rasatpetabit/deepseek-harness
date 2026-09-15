@@ -59,12 +59,19 @@ const NS = 'settings'
  */
 export const inject = ['slots', 'locale', 'connection', 'remote', 'remote.settings', 'settingsScope']
 
+/** Configuration for general settings UI shell. */
+export interface Config {
+  /** Permit host settings document action from remote (non-loopback) browser sessions. */
+  readonly allowRemoteAdministration?: boolean
+}
+
 /**
  * Register the `settings` dictionaries, the chrome content, and the General
  * section, each once its slot declaration is on the ledger.
  * @param ctx - client root context.
+ * @param config - optional {@link Config}.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: ClientContext, config?: Config): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-general: dictionaries')
   const connection = ctx.get('connection') as ConnectionHandle
 
@@ -73,7 +80,8 @@ export function apply(ctx: ClientContext): void {
   // locale/change re-registration wiring.
   const t = ctx.locale.bind(NS)
   // The shared SettingsScope mirror updates after document commits and reconnects.
-  const documentController = ctx.remote.$host.isLoopback
+  const canAdminister = ctx.remote.$host.isLoopback || config?.allowRemoteAdministration === true
+  const documentController = canAdminister
     ? new SettingsDocumentStore(ctx, ctx.settingsScope.describe())
     : undefined
   const documentInjected = documentController === undefined
