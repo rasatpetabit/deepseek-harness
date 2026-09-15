@@ -77,7 +77,9 @@ const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
  */
 const SKIP_WORKSPACE_BUILD: UserConfig = { entry: '' }
 
-const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const REPOSITORY_ROOT = existsSync(resolvePath(process.cwd(), 'pnpm-workspace.yaml'))
+  ? process.cwd()
+  : fileURLToPath(new URL('../..', import.meta.url))
 
 /** Rebase a physical lib-relative source onto a browser URL that mirrors the repository directories. */
 function browserSourcePath(source: string, sourcemapPath: string): string {
