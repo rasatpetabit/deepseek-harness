@@ -119,6 +119,48 @@ git rebase origin/master
 ./scripts/deploy-dsh.sh
 ```
 
+### 6.1 Plugin Management (profile-scoped)
+
+Third-party plugins live in the DSH profile under
+`/srv/deepseek-harness/data/profiles/web` (pnpm workspace) and **survive
+deploys** — `deploy-dsh.sh` never touches the data root. Manage them with the
+CLI, which forwards to pnpm in the profile directory:
+
+```bash
+# Install or pin a plugin version (exact pin via --save-exact)
+DSH_HOME=/srv/deepseek-harness/data \
+  /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js \
+  plugin --profile web add --save-exact dsh-coding-subscription-oauth@<version>
+
+sudo systemctl restart dsh.service
+```
+
+Peer-dependency warnings during `plugin add` are expected: the harness
+runtime supplies the `@deepseek-ai/*` peers at load time
+(`autoInstallPeers: false` in the profile lockfile).
+
+**Plugin/harness ABI rule.** DSH is a release-candidate line whose internal
+plugin contracts change between rc bumps with no stability promise. A plugin
+verified against an older rc can mount cleanly yet fail per-provider at
+runtime (missing required profile fields, renamed client modules). Treat any
+plugin upgrade or harness upgrade as requiring a runtime re-verification of
+the model catalog:
+
+```bash
+# mint a session cookie (trusted network), then request the catalog
+curl -s -c /tmp/dsh-cookie -H 'Host: 127.0.0.1:3080' http://127.0.0.1:3080/ -o /dev/null
+curl -s -b /tmp/dsh-cookie -X POST -H 'Host: 127.0.0.1:3080' \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"client-request","rpcId":"v","method":"session/modelCatalog","payload":{"args":{}}}' \
+  http://127.0.0.1:3080/api/session/modelCatalog
+# pass: failures array is [] and every expected provider group lists models
+```
+
+Currently installed: `dsh-coding-subscription-oauth@0.8.5` (exact pin).
+The plugin's credential files (`/srv/deepseek-harness/data/.*-auth.json`) are
+owned by the plugin and format-migrated by it on version changes; they are
+not touched by `deploy-dsh.sh`. Back them up before any plugin downgrade.
+
 ## 7. Rollback
 
 In the event an upgrade needs to be rolled back:
@@ -137,8 +179,17 @@ sudo systemctl restart dsh.service
 ## 8. Known Operational Limits
 
 1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
-2. **OAuth Flow Verification:** The plugin `dsh-coding-subscription-oauth@0.6.5` is installed and mounts successfully; live OAuth token exchanges require individual user credentials and were not executed.
-3. **Version Alignment:** Plugin 0.6.5 declares peer dependencies against DSH `0.1.1-rc.2`, whereas the monorepo is on `0.1.5-rc.2`. Startup and configuration verification succeed, but individual plugin features may encounter upstream drift.
+2. **OAuth Plugin Version:** `dsh-coding-subscription-oauth@0.8.5` is pinned in
+   the web profile and verified live on harness `0.1.5-rc.2` — the model
+   catalog returns all four OAuth routes (Grok Build, Codex, Kimi Code,
+   Claude Code) with `failures: []`. Earlier plugin versions (< 0.7.0) break
+   on this harness: `llm-pi-ai` at 0.1.5 requires a `modelErrors` profile
+   field they do not set, surfacing per provider as "Cannot read properties
+   of undefined (reading 'get')" in the model picker.
+3. **Version Alignment:** The plugin's declared BOM targets DSH `0.1.1-rc.2`
+   and BOM fields are unenforced decoration (nothing in the harness reads
+   them). Compatibility must be verified at runtime (see §6.1), not inferred
+   from package metadata. Re-verify after every plugin or harness upgrade.
 4. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
 5. **Undetected Model Capacity:** LiteLLM publishes an output cap for only some
    models. Those without one inherit the `llm-pi-ai` route defaults
