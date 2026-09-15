@@ -4,7 +4,7 @@
 
 **Goal:** Install DeepSeek Harness in `/srv/dev/ai/deepseek-harness`, build from source, deploy to `/srv/deepseek-harness`, configure `0.0.0.0` network binding, install `dsh-coding-subscription-oauth`, and configure an enabled systemd autostart service.
 
-**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<git-sha>` via atomic directory staging with atomic `current` symlink and persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
+**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<timestamp>-<git-sha>` via staging and atomic symlink promotion with persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
 
 **Tech Stack:** Node.js v22.22.1, pnpm v10.34.5, Cordis plugin system, systemd, TypeScript, tsdown, rolldown, Vite.
 
@@ -87,7 +87,7 @@ git commit -m "fix(build): add unrun and resolve workspace root for Node 22 tsdo
 ### Task 2: Production Root Provisioning & Release Deployment
 
 **Files:**
-- Create: `/srv/deepseek-harness/releases/<git-sha>`
+- Create: `/srv/deepseek-harness/releases/<timestamp>-<git-sha>`
 - Create: `/srv/deepseek-harness/data`
 - Create: `/srv/deepseek-harness/current` (symlink)
 - Create: `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`
@@ -106,7 +106,7 @@ chmod 755 /srv/deepseek-harness
 chmod 700 /srv/deepseek-harness/data
 ```
 
-- [ ] **Step 2: Create automated deploy & upgrade script with staging and boundary validation**
+- [ ] **Step 2: Create automated deploy & upgrade script with staging, boundary validation, and cleanup traps**
 
 Write `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`:
 ```bash
@@ -119,50 +119,111 @@ RELEASES_DIR="$PROD_ROOT/releases"
 KEEP_RELEASES=3
 
 cd "$DEV_ROOT"
-GIT_SHA=$(git rev-parse --short HEAD)
-TARGET_DIR="$RELEASES_DIR/$GIT_SHA"
-STAGING_DIR="$RELEASES_DIR/.staging-$GIT_SHA-$$"
 
-echo "Deploying DeepSeek Harness release $GIT_SHA..."
-rm -rf "$STAGING_DIR"
+# Ensure repository worktree is committed and clean
+GIT_STATUS=$(git status --porcelain)
+if [ -n "$GIT_STATUS" ]; then
+  echo "ERROR: Working tree is dirty. Commit or stash all changes before deploying." >&2
+  echo "$GIT_STATUS" >&2
+  exit 1
+fi
+
+GIT_SHA=$(git rev-parse --short HEAD)
+TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA}"
+TARGET_DIR="$RELEASES_DIR/$RELEASE_ID"
+STAGING_DIR="$RELEASES_DIR/.staging-${RELEASE_ID}"
+
+# Trap to guarantee removal of failed staging directories
+cleanup() {
+  if [ -d "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Staging DeepSeek Harness release $RELEASE_ID..."
 mkdir -p "$STAGING_DIR"
 
-# Copy built workspace excluding vcs and session state
+# Copy built workspace excluding VCS and development session caches
 rsync -a \
   --exclude='.git' \
   --exclude='.pi' \
   --exclude='docs/superpowers' \
   "$DEV_ROOT/" "$STAGING_DIR/"
 
-# Validate production boundary: ensure NO symlinks resolve into /srv/dev
-DEV_LEAKS=0
-while IFS= read -r -d '' link; do
-  target=$(readlink -f "$link" || true)
-  if [[ "$target" =~ ^/srv/dev ]]; then
-    echo "ERROR: Symlink $link resolves into /srv/dev -> $target" >&2
-    DEV_LEAKS=1
-  fi
-done < <(find "$STAGING_DIR" -type l -print0)
+# Validate production boundary: Fail closed if ANY symlink resolves into /srv/dev
+python3 - << PYEOF
+import os, sys
 
-if [ "$DEV_LEAKS" -ne 0 ]; then
-  echo "Aborting deploy: production boundary violations detected in staged release." >&2
-  rm -rf "$STAGING_DIR"
+staging = "$STAGING_DIR"
+violations = []
+visited = set()
+
+def audit_path(path):
+    if path in visited:
+        return
+    visited.add(path)
+    if os.path.islink(path):
+        try:
+            target = os.path.realpath(path)
+            if target.startswith("/srv/dev"):
+                violations.append(f"{path} -> {target}")
+            elif os.path.isdir(target):
+                audit_dir(target)
+        except Exception as e:
+            print(f"ERROR: Cannot resolve symlink {path}: {e}", file=sys.stderr)
+            sys.exit(2)
+
+def audit_dir(d):
+    try:
+        entries = os.scandir(d)
+    except Exception as e:
+        print(f"ERROR: Cannot scan directory {d}: {e}", file=sys.stderr)
+        sys.exit(2)
+    for entry in entries:
+        audit_path(entry.path)
+        if entry.is_dir(follow_symlinks=False):
+            audit_dir(entry.path)
+
+audit_dir(staging)
+
+if violations:
+    print(f"ERROR: {len(violations)} production boundary violation(s) found:", file=sys.stderr)
+    for v in violations[:10]:
+        print(f"  {v}", file=sys.stderr)
+    sys.exit(1)
+print("Production boundary check passed: 0 links into /srv/dev.")
+PYEOF
+
+# Move staging into permanent release directory (destination must not exist)
+if [ -e "$TARGET_DIR" ]; then
+  echo "ERROR: Target release directory $TARGET_DIR already exists." >&2
   exit 1
 fi
+mv -T "$STAGING_DIR" "$TARGET_DIR"
 
-# Atomic promotion
-rm -rf "$TARGET_DIR"
-mv "$STAGING_DIR" "$TARGET_DIR"
-ln -sfn "releases/$GIT_SHA" "$PROD_ROOT/current"
-echo "Active release promoted and flipped to $GIT_SHA."
+# Atomic symlink replacement
+TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"
+ln -sfn "releases/$RELEASE_ID" "$TEMP_LINK"
+mv -Tf "$TEMP_LINK" "$PROD_ROOT/current"
+echo "Active release promoted to $RELEASE_ID."
 
-# Prune older releases, keeping the newest KEEP_RELEASES
+# Bounded release retention (keep 3 latest, never prune active release)
+ACTIVE_TARGET=$(readlink "$PROD_ROOT/current")
+ACTIVE_RELEASE=$(basename "$ACTIVE_TARGET")
+
 cd "$RELEASES_DIR"
-RELEASES=($(ls -1td */ 2>/dev/null | tr -d '/'))
-if [ "${#RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
-  for ((i=KEEP_RELEASES; i<${#RELEASES[@]}; i++)); do
-    OLD_RELEASE="${RELEASES[$i]}"
-    echo "Pruning old release: $OLD_RELEASE"
+mapfile -t ALL_RELEASES < <(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' -printf '%f\n' | sort -r)
+
+if [ "${#ALL_RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
+  for ((i=KEEP_RELEASES; i<${#ALL_RELEASES[@]}; i++)); do
+    OLD_RELEASE="${ALL_RELEASES[$i]}"
+    if [ "$OLD_RELEASE" = "$ACTIVE_RELEASE" ]; then
+      echo "Preserving active release from prune: $OLD_RELEASE"
+      continue
+    fi
+    echo "Pruning older release: $OLD_RELEASE"
     rm -rf "$OLD_RELEASE"
   done
 fi
@@ -172,7 +233,7 @@ if systemctl is-active --quiet dsh.service 2>/dev/null; then
   sudo systemctl restart dsh.service
 fi
 
-echo "Deploy complete: $GIT_SHA"
+echo "Deploy complete: $RELEASE_ID"
 ```
 Make executable: `chmod +x /srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`.
 
