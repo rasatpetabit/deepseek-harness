@@ -302,10 +302,23 @@ def write_atomic(path: str, text: str, *, backup: bool) -> str | None:
 
 
 def load_lock(path: str):
-    """An advisory lock so two concurrent runs cannot interleave writes."""
+    """An advisory lock so two concurrent runs cannot interleave writes.
+
+    The lock file is a persistent zero-byte artifact: flock needs a stable
+    inode, so it is deliberately not removed on exit. It is created and
+    normalized private because it sits beside the harness credential store.
+    """
     if fcntl is None:
         return None
-    handle = open(path, "a+", encoding="utf-8")
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        # O_CREAT's mode is ignored for an existing file, so normalize rather
+        # than assume: an earlier run under a looser umask must not persist.
+        os.fchmod(descriptor, 0o600)
+        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+    except BaseException:
+        os.close(descriptor)
+        raise
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

@@ -31,6 +31,7 @@ build_provider = catalog["build_provider"]
 merge_provider = catalog["merge_provider"]
 load_yaml_strict = catalog["load_yaml_strict"]
 write_atomic = catalog["write_atomic"]
+load_lock = catalog["load_lock"]
 render_yaml = catalog["render_yaml"]
 format_report = catalog["format_report"]
 
@@ -270,6 +271,47 @@ def test_no_temporary_files_survive_a_successful_write(tmp_path: Path) -> None:
     path = tmp_path / "settings.yaml"
     write_atomic(str(path), render_yaml({"a": 1}), backup=False)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["settings.yaml"]
+
+
+# --- the lock file sits beside the credential store, so it is private ---------
+
+
+def test_lock_file_is_created_private(tmp_path: Path) -> None:
+    lock_path = str(tmp_path / "settings.yaml.lock")
+    handle = load_lock(lock_path)
+    try:
+        assert handle is not None
+        assert stat.S_IMODE(os.stat(lock_path).st_mode) == 0o600
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+def test_lock_file_mode_is_normalized_even_if_it_already_existed(tmp_path: Path) -> None:
+    lock_path = tmp_path / "settings.yaml.lock"
+    lock_path.write_text("", encoding="utf-8")
+    os.chmod(lock_path, 0o644)
+    handle = load_lock(str(lock_path))
+    try:
+        assert stat.S_IMODE(os.stat(lock_path).st_mode) == 0o600
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+def test_a_second_concurrent_run_fails_closed(tmp_path: Path) -> None:
+    lock_path = str(tmp_path / "settings.yaml.lock")
+    first = load_lock(lock_path)
+    assert first is not None
+    try:
+        with pytest.raises(CatalogError, match="refusing to race it"):
+            load_lock(lock_path)
+    finally:
+        first.close()
+    # Released, the lock is acquirable again.
+    second = load_lock(lock_path)
+    assert second is not None
+    second.close()
 
 
 # --- the importer must never touch the credential store ----------------------
