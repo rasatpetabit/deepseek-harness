@@ -6,33 +6,53 @@ PROD_ROOT="/srv/deepseek-harness"
 RELEASES_DIR="$PROD_ROOT/releases"
 KEEP_RELEASES=3
 
+# Acquire exclusive deployment lock
+mkdir -p "$PROD_ROOT"
+exec 9>"$PROD_ROOT/.deploy.lock"
+flock -n 9 || { echo "ERROR: Deployment lock busy; another deploy is running." >&2; exit 1; }
+
 cd "$DEV_ROOT"
 
 # Ensure repository worktree is committed and clean
-GIT_STATUS=$(git status --porcelain)
-if [ -n "$GIT_STATUS" ]; then
-  echo "ERROR: Working tree is dirty. Commit or stash all changes before deploying." >&2
-  echo "$GIT_STATUS" >&2
+GIT_SHA=$(git rev-parse --verify HEAD)
+if ! git diff-index --quiet "$GIT_SHA" -- || [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: Working tree is dirty or modified. Commit or stash all changes before deploying." >&2
+  git status --porcelain >&2
   exit 1
 fi
 
-GIT_SHA=$(git rev-parse --short HEAD)
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA}"
+RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA:0:7}"
 TARGET_DIR="$RELEASES_DIR/$RELEASE_ID"
 STAGING_DIR="$RELEASES_DIR/.staging-${RELEASE_ID}"
-PROMOTED=0
 
-# Guarantee removal of unpromoted staging or target directory on exit
+# Guarantee cleanup of unpromoted staging or target directory on exit
 cleanup() {
-  if [ "$PROMOTED" -eq 0 ]; then
-    rm -rf "$STAGING_DIR" "$TARGET_DIR"
+  local exit_code=$?
+  if [ -d "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
   fi
+  if [ -d "$TARGET_DIR" ]; then
+    local current_real
+    current_real=$(realpath "$PROD_ROOT/current" 2>/dev/null || true)
+    if [ "$current_real" != "$TARGET_DIR" ]; then
+      rm -rf "$TARGET_DIR"
+    fi
+  fi
+  exit "$exit_code"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "Rebuilding clean workspace artifacts for $GIT_SHA..."
 pnpm run build
+
+# Verify worktree remained pristine throughout the build
+if ! git diff-index --quiet "$GIT_SHA" --; then
+  echo "ERROR: Tracked source modified during build. Aborting deploy." >&2
+  exit 1
+fi
 
 echo "Staging DeepSeek Harness release $RELEASE_ID from committed snapshot..."
 mkdir -p "$STAGING_DIR"
