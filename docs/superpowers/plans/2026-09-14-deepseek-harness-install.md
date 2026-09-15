@@ -4,7 +4,7 @@
 
 **Goal:** Install DeepSeek Harness in `/srv/dev/ai/deepseek-harness`, build from source, deploy to `/srv/deepseek-harness`, configure `0.0.0.0` network binding, install `dsh-coding-subscription-oauth`, and configure an enabled systemd autostart service.
 
-**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<git-sha>` with atomic `current` symlink and persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
+**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<git-sha>` via atomic directory staging with atomic `current` symlink and persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
 
 **Tech Stack:** Node.js v22.22.1, pnpm v10.34.5, Cordis plugin system, systemd, TypeScript, tsdown, rolldown, Vite.
 
@@ -60,15 +60,18 @@ Run:
 cd /srv/dev/ai/deepseek-harness
 pnpm run build
 ```
-Expected output: `build: recorded 234 client artifact(s)` and exit status 0.
+Expected output: exit status 0 and `apps/cli/lib/bin.js` generated.
 
-- [ ] **Step 4: Verify built dsh CLI binary**
+- [ ] **Step 4: Verify built dsh CLI application profile boot**
 
 Run:
 ```bash
-node /srv/dev/ai/deepseek-harness/apps/cli/lib/bin.js --version
+EXPECTED_VERSION=$(node -p "require('./package.json').version")
+ACTUAL_VERSION=$(node apps/cli/lib/bin.js --version)
+[ "$ACTUAL_VERSION" = "$EXPECTED_VERSION" ] && echo "Version match: $ACTUAL_VERSION"
+node apps/cli/lib/bin.js --profile web --dump-default-config >/dev/null && echo "Web profile dump successful"
 ```
-Expected output: `0.1.5-rc.2`.
+Expected output: "Version match: <version>" and "Web profile dump successful".
 
 - [ ] **Step 5: Commit toolchain compatibility changes**
 
@@ -103,7 +106,7 @@ chmod 755 /srv/deepseek-harness
 chmod 700 /srv/deepseek-harness/data
 ```
 
-- [ ] **Step 2: Create automated deploy & upgrade script**
+- [ ] **Step 2: Create automated deploy & upgrade script with staging and boundary validation**
 
 Write `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`:
 ```bash
@@ -118,22 +121,43 @@ KEEP_RELEASES=3
 cd "$DEV_ROOT"
 GIT_SHA=$(git rev-parse --short HEAD)
 TARGET_DIR="$RELEASES_DIR/$GIT_SHA"
+STAGING_DIR="$RELEASES_DIR/.staging-$GIT_SHA-$$"
 
 echo "Deploying DeepSeek Harness release $GIT_SHA..."
-mkdir -p "$TARGET_DIR"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
 
-rsync -a --delete \
+# Copy built workspace excluding vcs and session state
+rsync -a \
   --exclude='.git' \
   --exclude='.pi' \
   --exclude='docs/superpowers' \
-  "$DEV_ROOT/" "$TARGET_DIR/"
+  "$DEV_ROOT/" "$STAGING_DIR/"
 
+# Validate production boundary: ensure NO symlinks resolve into /srv/dev
+DEV_LEAKS=0
+while IFS= read -r -d '' link; do
+  target=$(readlink -f "$link" || true)
+  if [[ "$target" =~ ^/srv/dev ]]; then
+    echo "ERROR: Symlink $link resolves into /srv/dev -> $target" >&2
+    DEV_LEAKS=1
+  fi
+done < <(find "$STAGING_DIR" -type l -print0)
+
+if [ "$DEV_LEAKS" -ne 0 ]; then
+  echo "Aborting deploy: production boundary violations detected in staged release." >&2
+  rm -rf "$STAGING_DIR"
+  exit 1
+fi
+
+# Atomic promotion
+rm -rf "$TARGET_DIR"
+mv "$STAGING_DIR" "$TARGET_DIR"
 ln -sfn "releases/$GIT_SHA" "$PROD_ROOT/current"
-echo "Active release flipped to $GIT_SHA."
+echo "Active release promoted and flipped to $GIT_SHA."
 
 # Prune older releases, keeping the newest KEEP_RELEASES
 cd "$RELEASES_DIR"
-# List releases sorted by mtime, newest first
 RELEASES=($(ls -1td */ 2>/dev/null | tr -d '/'))
 if [ "${#RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
   for ((i=KEEP_RELEASES; i<${#RELEASES[@]}; i++)); do
@@ -152,7 +176,7 @@ echo "Deploy complete: $GIT_SHA"
 ```
 Make executable: `chmod +x /srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`.
 
-- [ ] **Step 3: Run initial deployment to /srv/deepseek-harness**
+- [ ] **Step 3: Run deployment script to /srv/deepseek-harness**
 
 Run:
 ```bash
@@ -160,13 +184,13 @@ Run:
 ```
 Verify `/srv/deepseek-harness/current` points to the active release directory.
 
-- [ ] **Step 4: Verify production binary execution**
+- [ ] **Step 4: Verify production application profile boot**
 
 Run:
 ```bash
-/usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js --version
+node /srv/deepseek-harness/current/apps/cli/lib/bin.js --profile web --dump-default-config >/dev/null && echo "Production web profile valid"
 ```
-Expected output: `0.1.5-rc.2`.
+Expected output: "Production web profile valid".
 
 - [ ] **Step 5: Commit deployment script**
 
