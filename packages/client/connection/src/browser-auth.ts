@@ -277,30 +277,6 @@ export class BrowserAuth {
       return false
     }
     if (this.isAuthenticated(req)) return true
-
-    // When requested via root GET without a valid session cookie, auto-mint the authority-bound cookie
-    const authority = requestAuthority(req.headers)
-    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html') && authority !== undefined) {
-      const issuedAt = Date.now()
-      const expiresAt = issuedAt + this.maxAgeMilliseconds
-      const value = encodeCookie({
-        version: COOKIE_PAYLOAD_VERSION,
-        authority,
-        issuedAt,
-        expiresAt,
-      }, this.secret)
-      res.writeHead(303, {
-        'cache-control': 'no-store',
-        'location': '/',
-        'referrer-policy': 'no-referrer',
-        'set-cookie': sessionCookie(
-          cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
-        ),
-      })
-      res.end()
-      return false
-    }
-
     this.writeUnauthorized(req, res)
     return false
   }

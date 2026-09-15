@@ -47,7 +47,6 @@ function parseAuthority(authority: string): URL | undefined {
  * @param entry - the configured value, verbatim.
  */
 export function assertTrustedAuthority(entry: string): void {
-  if (entry === '*') return
   const entryUrl = parseAuthority(entry)
   if (entryUrl !== undefined && canonicalAuthority(entry, entryUrl) === entry.toLowerCase()) return
   throw new Error(`client-connection: trustedHosts entry ${JSON.stringify(entry)} is not a bare host[:port] authority`)
@@ -74,7 +73,6 @@ function canonicalAuthority(entry: string, entryUrl: URL): string {
  * normalization, so case and a redundant `:80` never decide trust.
  */
 function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): boolean {
-  if (trustedHosts.includes('*')) return true
   return trustedHosts.some((entry) => {
     const entryUrl = parseAuthority(entry)
     if (entryUrl === undefined) return false
