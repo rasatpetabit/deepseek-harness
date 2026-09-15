@@ -112,10 +112,14 @@ sudo systemctl restart dsh.service
 
 Classification comes from LiteLLM's authoritative `/model/info` capability
 metadata, not from model-name substrings. The importer excludes wildcard route
-placeholders (catch-all routes whose capacities are generic route defaults, not
-measured) and any non-chat mode, and emits `contextWindow`/`maxTokens` only when
-LiteLLM actually published them — an absent value inherits DSH's route default
-visibly rather than recording a fabricated number as a measurement.
+placeholders and any non-chat mode, and emits `contextWindow`/`maxTokens` only
+when LiteLLM actually published them — an absent value inherits DSH's route
+default visibly rather than recording a fabricated number as a measurement.
+
+The admitted set is the importer's **selection**, not a list of individually
+verified chat models. Where LiteLLM publishes no `mode` the importer falls back
+to a name heuristic and says so in its report; an unrecognized non-empty `mode`
+is admitted. Treat the discovery report as the claim to check, not as proof.
 
 The importer **never opens the credential store**. It writes an `apiKeyEnv`
 *reference* (`LITELLM_API_KEY`); supplying that secret is a separate operator
@@ -175,3 +179,32 @@ sudo systemctl restart dsh.service
    `settings.yaml.bak`; delete it once the result is reviewed, or pass
    `--no-backup`. `settings.yaml.lock` is a legitimate persistent `flock` inode
    and is expected to remain.
+7. **Deployed Versus Committed:** the running release is built from a specific
+   commit — check it with `basename "$(readlink -f /srv/deepseek-harness/current)"`
+   and compare against `git log`. Commits landed after the last deploy are
+   **not** in production. Do not assume a source fix is live, and do not redeploy
+   merely to synchronize documentation.
+
+## 9. Bounded Follow-Up Work
+
+Known defects in `scripts/litellm_catalog.py`, recorded rather than fixed so
+that they are not rediscovered. None is a reason for an unreviewed production
+change.
+
+1. **`.bak` is created before its mode is set.** `write_atomic` opens the backup
+   with a plain `open(..., "wb")` and chmods afterwards, leaving a brief
+   permissions window and following a pre-existing symlink at that path. Use
+   `os.open` with `O_CREAT | O_EXCL | O_NOFOLLOW` and mode `0600`. Severity is
+   low here — the data directory is private and single-owner — but the shape is
+   wrong.
+2. **The lock does not coordinate with DSH.** It serializes concurrent importer
+   runs only. A Settings UI save made while the importer runs can be silently
+   overwritten, because DSH holds no part of this lock. Stop the service, or do
+   not edit Settings in the browser, during an `--apply`.
+3. **Invalid entries are discarded silently**, and duplicate model metadata is
+   first-wins. A malformed `/model/info` response narrows the catalog without
+   failing the run; only the totals in the report hint at it.
+4. **`--allow-other-protocols` is unverified.** It admits `responses`-mode models
+   into a route declared `api: openai-completions`. LiteLLM may well translate
+   between the two, but that has not been tested here. Do not pass the flag
+   without first confirming DSH can serve the resulting route.
