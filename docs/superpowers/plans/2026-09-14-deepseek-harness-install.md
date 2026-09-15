@@ -212,25 +212,33 @@ mv -Tf "$TEMP_LINK" "$PROD_ROOT/current"
 PROMOTED=1
 echo "Active release promoted to $RELEASE_ID."
 
-# Bounded release retention (keep 3 latest, never prune active release)
-ACTIVE_TARGET=$(readlink "$PROD_ROOT/current")
-ACTIVE_RELEASE=$(basename "$ACTIVE_TARGET")
+# Bounded release retention per /srv/AGENTS.md: mtime newest-first, protected active release
+python3 - << PYEOF
+import os, shutil, sys
 
-cd "$RELEASES_DIR"
-RAW_RELEASES=$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' -printf '%f\n' | sort -r)
-mapfile -t ALL_RELEASES <<< "$RAW_RELEASES"
+releases_dir = "$RELEASES_DIR"
+prod_root = "$PROD_ROOT"
+keep = $KEEP_RELEASES
 
-if [ "${#ALL_RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
-  for ((i=KEEP_RELEASES; i<${#ALL_RELEASES[@]}; i++)); do
-    OLD_RELEASE="${ALL_RELEASES[$i]}"
-    if [ "$OLD_RELEASE" = "$ACTIVE_RELEASE" ]; then
-      echo "Preserving active release from prune: $OLD_RELEASE"
-      continue
-    fi
-    echo "Pruning older release: $OLD_RELEASE"
-    rm -rf "$OLD_RELEASE"
-  done
-fi
+try:
+    active_real = os.path.realpath(os.path.join(prod_root, "current"))
+    candidates = []
+    for entry in os.scandir(releases_dir):
+        if entry.is_dir() and not entry.name.startswith("."):
+            candidates.append((entry.stat().st_mtime, entry.path))
+    
+    # Sort newest-first by mtime
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    for mtime, path in candidates[keep:]:
+        if os.path.realpath(path) == active_real:
+            print(f"Preserving active release from prune: {path}")
+            continue
+        print(f"Pruning older release: {path}")
+        shutil.rmtree(path)
+except Exception as e:
+    print(f"ERROR during release retention: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
 
 if systemctl is-active --quiet dsh.service 2>/dev/null; then
   echo "Restarting dsh.service..."
