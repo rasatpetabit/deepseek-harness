@@ -35,15 +35,56 @@ journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
 
 This prints both the loopback URL (`http://127.0.0.1:3080/?token=...`) and LAN URL (`http://<lan-ip>:3080/?token=...`).
 
-## 4. Accessing the Coding Subscription OAuth Plugin
+> **The LAN URL gives you chat, not Settings.** See section 4 before administering
+> models or OAuth from another machine.
 
-The `dsh-coding-subscription-oauth` plugin is loaded into the Web profile. By design, the plugin's Settings and credential endpoints enforce loopback-only access. When configuring OAuth accounts from a remote machine, access DSH via an SSH port-forwarding tunnel:
+## 4. Remote Access: Chat Works Over LAN, Settings Does Not
+
+Two independent loopback gates apply. Both are deliberate security boundaries.
+Neither is configurable, and neither is bypassed by a reverse proxy.
+
+### 4.1 The whole Settings UI is gated on the browser's address bar
+
+The DSH **client** decides whether Settings can persist at all, from the hostname
+in the address bar:
+
+| Step | Location |
+|---|---|
+| `isLoopback` derives from the page hostname | `packages/client/connection/src/client/index.ts` |
+| true only for `localhost`, `[::1]`, `127.0.0.0/8` | `packages/client/connection/src/loopback-hostname.ts` |
+| `persistence = isLoopback ? 'host' : 'memory'` | `packages/client/ui-settings/src/client/index.ts` |
+| `memory` sets `status: 'unavailable'`, terminally | `packages/client/ui-settings/src/client/settings-mirror.ts` |
+| `view === undefined` raises the error below | `packages/client/ui-settings-models/src/client/store.ts` |
+
+Opening the LAN URL therefore shows:
+
+> Loading the provider directory failed: settings are unavailable in this browser
+
+This is **not** an authentication failure, a server fault, or a problem with
+`settings.yaml`. Chat works normally over LAN; only Settings is gated. Because
+the check is on the address-bar hostname, a reverse proxy does not help — the
+proxy's own hostname is still not loopback. Do not "fix" this by forcing
+`isLoopback` or adding wildcard trusted hosts; both remove a real boundary.
+
+### 4.2 The OAuth plugin additionally gates on the TCP peer
+
+`dsh-coding-subscription-oauth` rejects a non-loopback `req.socket.remoteAddress`
+on its credential and capability endpoints before any Host or Origin check, so
+its capability switches return `403 Forbidden` from a LAN browser even once
+Settings loads. Do not patch the plugin's checks in `node_modules`.
+
+### 4.3 The one supported remote path: SSH port forwarding
 
 ```bash
 ssh -L 3080:localhost:3080 ras@<host-ip>
 ```
 
-Then open `http://localhost:3080/?token=<token>` in your local browser and navigate to **Settings → Coding OAuth** to log in to Grok, Codex, Kimi, or Claude Code.
+Then open `http://localhost:3080/?token=<token>` in your local browser. The
+address bar reads `localhost`, so `isLoopback` is true and the full Settings UI
+works — **Settings → Models** for providers, and **Settings → Coding OAuth** to
+log in to Grok, Codex, Kimi, or Claude Code.
+
+The launch token changes on every service restart; re-read it per section 3.
 
 Alternatively, manage OAuth accounts directly from the command line:
 
@@ -51,7 +92,42 @@ Alternatively, manage OAuth accounts directly from the command line:
 DSH_HOME=/srv/deepseek-harness/data /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js plugin --profile web exec dsh-coding-oauth login codex
 ```
 
-## 5. Updates and Upgrades
+Note the CLI covers OAuth only. It has **no** capability-management or
+model-settings command, so it is not an alternative to the tunnel for Settings.
+
+## 5. Model Catalog Management (LiteLLM)
+
+The local LiteLLM gateway is registered as a `llm-pi-ai` provider route in
+`/srv/deepseek-harness/data/settings.yaml`. Refresh it with the deployed
+importer — run it from the release tree, never from `/srv/dev`:
+
+```bash
+# Discovery only; writes nothing. Reports admitted/rejected counts with reasons.
+python3 /srv/deepseek-harness/current/scripts/litellm_catalog.py
+
+# Merge into settings.yaml once the discovery report looks right.
+python3 /srv/deepseek-harness/current/scripts/litellm_catalog.py --apply
+sudo systemctl restart dsh.service
+```
+
+Classification comes from LiteLLM's authoritative `/model/info` capability
+metadata, not from model-name substrings. The importer excludes wildcard route
+placeholders (catch-all routes whose capacities are generic route defaults, not
+measured) and any non-chat mode, and emits `contextWindow`/`maxTokens` only when
+LiteLLM actually published them — an absent value inherits DSH's route default
+visibly rather than recording a fabricated number as a measurement.
+
+The importer **never opens the credential store**. It writes an `apiKeyEnv`
+*reference* (`LITELLM_API_KEY`); supplying that secret is a separate operator
+act through DSH's own credential UI or the environment.
+
+Tests: `python3 -m pytest scripts/tests/test_litellm_catalog.py`
+
+> **Never rotate `client-connection/browser-session` in `.credentials.yaml` as a
+> side effect of model refresh.** That record holds the HMAC secret signing
+> `dsh-auth-*` cookies; deleting it logs out every live browser session.
+
+## 6. Updates and Upgrades
 
 The development checkout in `/srv/dev/ai/deepseek-harness` tracks upstream `origin/master`. To update and deploy:
 
@@ -66,7 +142,7 @@ git rebase origin/master
 ./scripts/deploy-dsh.sh
 ```
 
-## 6. Rollback
+## 7. Rollback
 
 In the event an upgrade needs to be rolled back:
 
@@ -81,8 +157,21 @@ sudo ln -sfn "releases/<previous-release-id>" /srv/deepseek-harness/current
 sudo systemctl restart dsh.service
 ```
 
-## 7. Known Operational Limits
+## 8. Known Operational Limits
 
-1. **OAuth Flow Verification:** The plugin `dsh-coding-subscription-oauth@0.6.5` is installed and mounts successfully; live OAuth token exchanges require individual user credentials and were not executed.
-2. **Version Alignment:** Plugin 0.6.5 declares peer dependencies against DSH `0.1.1-rc.2`, whereas the monorepo is on `0.1.5-rc.2`. Startup and configuration verification succeed, but individual plugin features may encounter upstream drift.
-3. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
+1. **Settings Is Loopback-Only:** the entire Settings UI, including the Models
+   provider directory, is unavailable to any browser whose address bar is not
+   loopback. See section 4.1. Use the SSH tunnel; do not patch the client gate.
+2. **OAuth Flow Verification:** The plugin `dsh-coding-subscription-oauth@0.6.5` is installed and mounts successfully; live OAuth token exchanges require individual user credentials and were not executed.
+3. **Version Alignment:** Plugin 0.6.5 declares peer dependencies against DSH `0.1.1-rc.2`, whereas the monorepo is on `0.1.5-rc.2`. Startup and configuration verification succeed, but individual plugin features may encounter upstream drift.
+4. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
+5. **Undetected Model Capacity:** LiteLLM publishes an output cap for only some
+   models. Those without one inherit the `llm-pi-ai` route defaults
+   (`DEFAULT_CONTEXT_WINDOW` / `DEFAULT_MAX_TOKENS` in
+   `packages/llm/llm-pi-ai/src/config.ts`), which are fallbacks, not measured
+   limits. The importer's discovery report states both counts.
+6. **No Backup Trash In The Data Directory:** `/srv/AGENTS.md` forbids leaving
+   `.bak`/`.backup` files in a production root. The importer writes one bounded
+   `settings.yaml.bak`; delete it once the result is reviewed, or pass
+   `--no-backup`. `settings.yaml.lock` is a legitimate persistent `flock` inode
+   and is expected to remain.
