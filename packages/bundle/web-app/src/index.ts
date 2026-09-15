@@ -249,25 +249,27 @@ export function apply(ctx: Context, config: Config): void {
   const handoffBrowser = config.openBrowser && !launchedThroughSsh(launchEnvironmentOf(ctx))
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
-  ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
-  ctx.inject(['connection'], (connectionCtx) => {
-    connectionCtx.provide('ownerRequestPolicy', {
-      authorize(req: IncomingMessage): OwnerRequestDecision {
-        const remote = req.socket?.remoteAddress
-        if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
-          return { authorized: true, accessMode: 'loopback' }
-        }
-        const rejection = connectionCtx.connection.requestRejection(req)
+  ctx.provide('ownerRequestPolicy', {
+    authorize(req: IncomingMessage): OwnerRequestDecision {
+      const remote = req.socket?.remoteAddress
+      if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
+        return { authorized: true, accessMode: 'loopback' }
+      }
+      const connection = ctx.get('connection')
+      if (connection) {
+        const rejection = connection.requestRejection(req)
         if (rejection === undefined) {
           return { authorized: true, accessMode: 'trusted-https-proxy' }
         }
         return { authorized: false, reason: rejection === 401 ? 'unauthorized' : 'forbidden' }
-      },
-      diagnostics() {
-        return []
-      },
-    })
+      }
+      return { authorized: false, reason: 'unauthorized' }
+    },
+    diagnostics() {
+      return []
+    },
   })
+  ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {
       addHarnessSourceSection(promptCtx, SOURCE_ROOT)

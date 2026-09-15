@@ -428,7 +428,6 @@ describe('web-app runtime glue', () => {
       requestRejection,
     } as unknown as HostConnectionHandle)
     apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
-    await new Promise(resolve => setTimeout(resolve, 0))
     const policy = ctx.get('ownerRequestPolicy')
     expect(policy).toBeDefined()
     if (!policy) throw new Error('ownerRequestPolicy service missing')
