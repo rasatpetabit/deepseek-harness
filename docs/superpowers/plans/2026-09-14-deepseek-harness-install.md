@@ -4,7 +4,7 @@
 
 **Goal:** Install DeepSeek Harness in `/srv/dev/ai/deepseek-harness`, build from source, deploy to `/srv/deepseek-harness`, configure `0.0.0.0` network binding, install `dsh-coding-subscription-oauth`, and configure an enabled systemd autostart service.
 
-**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<timestamp>-<git-sha>` via git archive staging and atomic symlink promotion with persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
+**Architecture:** Monorepo source checkout maintained in `/srv/dev/ai/deepseek-harness` with Node 22 build compatibility fixes. Production release deployed to `/srv/deepseek-harness/releases/<timestamp>-<git-sha>` via git archive staging, post-promotion boundary validation, and atomic symlink promotion with persistent `DSH_HOME` at `/srv/deepseek-harness/data`. Cordis patch sets `webserver` host to `0.0.0.0`. Autostart managed by `/etc/systemd/system/dsh.service`.
 
 **Tech Stack:** Node.js v22.22.1, pnpm v10.34.5, Cordis plugin system, systemd, TypeScript, tsdown, rolldown, Vite.
 
@@ -106,7 +106,7 @@ chmod 755 /srv/deepseek-harness
 chmod 700 /srv/deepseek-harness/data
 ```
 
-- [ ] **Step 2: Create automated deploy & upgrade script with clean committed snapshot, boundary validation, and cleanup traps**
+- [ ] **Step 2: Create automated deploy & upgrade script with fresh build, strict boundary validation, and cleanup traps**
 
 Write `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`:
 ```bash
@@ -134,13 +134,16 @@ RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA}"
 TARGET_DIR="$RELEASES_DIR/$RELEASE_ID"
 STAGING_DIR="$RELEASES_DIR/.staging-${RELEASE_ID}"
 
-# Trap to guarantee removal of failed staging directories
+# Guarantee removal of failed staging directory on exit
 cleanup() {
   if [ -d "$STAGING_DIR" ]; then
     rm -rf "$STAGING_DIR"
   fi
 }
 trap cleanup EXIT INT TERM
+
+echo "Rebuilding clean workspace artifacts for $GIT_SHA..."
+pnpm run build
 
 echo "Staging DeepSeek Harness release $RELEASE_ID from committed snapshot..."
 mkdir -p "$STAGING_DIR"
@@ -157,17 +160,28 @@ rsync -a \
   --exclude='*' \
   "$DEV_ROOT/" "$STAGING_DIR/"
 
-# 3. Validate production boundary: Fail closed with strict resolution
+# Move staging into permanent release directory before validation so all paths are final
+if [ -e "$TARGET_DIR" ]; then
+  echo "ERROR: Target release directory $TARGET_DIR already exists." >&2
+  exit 1
+fi
+mv -T "$STAGING_DIR" "$TARGET_DIR"
+
+# 3. Validate production boundary on the final release tree: Fail closed with strict resolution
 python3 - << PYEOF
 import os, sys
 from pathlib import Path
 
-staging = Path("$STAGING_DIR")
+target = Path("$TARGET_DIR")
 dev_tree = Path("/srv/dev")
 violations = []
 checked_links = 0
 
-for root, dirs, files in os.walk(staging):
+def on_error(err):
+    print(f"ERROR: Traversal error: {err}", file=sys.stderr)
+    sys.exit(2)
+
+for root, dirs, files in os.walk(target, onerror=on_error):
     for name in dirs + files:
         item = Path(root) / name
         if item.is_symlink():
@@ -176,6 +190,8 @@ for root, dirs, files in os.walk(staging):
                 resolved = item.resolve(strict=True)
                 if resolved.is_relative_to(dev_tree):
                     violations.append(f"{item} -> {resolved}")
+                elif not (resolved.is_relative_to(target) or str(resolved).startswith(("/usr", "/lib", "/bin"))):
+                    violations.append(f"External unverified link: {item} -> {resolved}")
             except Exception as exc:
                 print(f"ERROR: Cannot strictly resolve symlink {item}: {exc}", file=sys.stderr)
                 sys.exit(2)
@@ -186,15 +202,8 @@ if violations:
         print(f"  {v}", file=sys.stderr)
     sys.exit(1)
 
-print(f"Production boundary check passed: {checked_links} symlinks verified, 0 leaks into /srv/dev.")
+print(f"Production boundary check passed: {checked_links} symlinks strictly verified, 0 leaks into /srv/dev.")
 PYEOF
-
-# Move staging into permanent release directory (destination must not exist)
-if [ -e "$TARGET_DIR" ]; then
-  echo "ERROR: Target release directory $TARGET_DIR already exists." >&2
-  exit 1
-fi
-mv -T "$STAGING_DIR" "$TARGET_DIR"
 
 # Atomic symlink replacement
 TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"
