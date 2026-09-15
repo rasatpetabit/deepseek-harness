@@ -56,6 +56,8 @@ export interface Config {
   surfaceContext: boolean
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Whether to inject remote administration support for client Settings UI. */
+  allowRemoteAdministration?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -63,6 +65,7 @@ export const Config: z<Config> = z.object({
   printUrl: z.boolean().default(true),
   surfaceContext: z.boolean().default(true),
   trustedHosts: z.array(String).default([]),
+  allowRemoteAdministration: z.boolean().default(false),
 })
 
 /** Bind-dependent Web values shared by the trust fence and URL display. */
@@ -251,27 +254,27 @@ export function apply(ctx: Context, config: Config): void {
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.provide('ownerRequestPolicy', {
     authorize(req: IncomingMessage): OwnerRequestDecision {
-      const remote = req.socket?.remoteAddress
-      if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
-        return { authorized: true, accessMode: 'loopback' }
-      }
       const connection = ctx.get('connection')
-      if (connection) {
-        const rejection = connection.requestRejection(req)
-        if (rejection === undefined) {
-          return { authorized: true, accessMode: 'trusted-https-proxy' }
-        }
+      if (connection === undefined) {
+        return { authorized: false, reason: 'connection-unavailable' }
+      }
+      const rejection = connection.requestRejection(req)
+      if (rejection !== undefined) {
         return { authorized: false, reason: rejection === 401 ? 'unauthorized' : 'forbidden' }
       }
-      return { authorized: false, reason: 'unauthorized' }
+      const remote = req.socket?.remoteAddress
+      const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+      return { authorized: true, accessMode: isLoopback ? 'loopback' : 'trusted-https-proxy' }
     },
     diagnostics() {
       return []
     },
   })
-  ctx.on('webserver/index-inject', (table) => {
-    table.push({ kind: 'global', name: '__DSH_REMOTE_ADMINISTRATION__', value: true })
-  })
+  if (config.allowRemoteAdministration) {
+    ctx.on('webserver/index-inject', (table) => {
+      table.push({ kind: 'global', name: '__DSH_REMOTE_ADMINISTRATION__', value: true })
+    })
+  }
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {

@@ -301,30 +301,56 @@ def write_atomic(path: str, text: str, *, backup: bool) -> str | None:
     return backup_path
 
 
-def load_lock(path: str):
-    """An advisory lock so two concurrent runs cannot interleave writes.
+class FileLock:
+    """Advisory lock that cleans up its lock file on release.
 
-    The lock file is a persistent zero-byte artifact: flock needs a stable
-    inode, so it is deliberately not removed on exit. It is created and
-    normalized private because it sits beside the harness credential store.
+    DSH's internal withFileLock (dsh-atomic-write) uses `writeFile(..., { flag: 'wx' })`
+    on `<filename>.lock`, which fails if the lock file already exists. Cleaning up
+    the lock file on release ensures subsequent settings writes are never blocked.
     """
+
+    def __init__(self, path: str, descriptor: int) -> None:
+        self.path = path
+        self.descriptor = descriptor
+
+    def release(self) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(self.descriptor)
+        except OSError:
+            pass
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+
+    def __enter__(self) -> "FileLock":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.release()
+
+
+def load_lock(path: str) -> FileLock | None:
+    """An advisory lock so two concurrent runs cannot interleave writes."""
     if fcntl is None:
         return None
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        # O_CREAT's mode is ignored for an existing file, so normalize rather
-        # than assume: an earlier run under a looser umask must not persist.
         os.fchmod(descriptor, 0o600)
-        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
     except BaseException:
         os.close(descriptor)
         raise
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        handle.close()
+        os.close(descriptor)
         raise CatalogError(f"another litellm-catalog run holds {path}; refusing to race it") from None
-    return handle
+    return FileLock(path, descriptor)
 
 
 def discover(base_url: str, *, timeout: float, api_key: str | None, allow_wildcards: bool, allow_other_protocols: bool) -> tuple[list[dict[str, Any]], dict[str, int], int]:
@@ -420,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             backup = write_atomic(args.settings, render_yaml(merged), backup=not args.no_backup)
         finally:
             if lock is not None:
-                lock.close()
+                lock.release()
         print(f"\nmerged provider '{args.provider}' into {args.settings}"
               + (f" (backup: {backup})" if backup else ""))
         print("Restart the harness to pick the document up.")

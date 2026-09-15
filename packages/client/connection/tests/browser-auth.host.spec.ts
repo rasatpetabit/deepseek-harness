@@ -247,4 +247,53 @@ describe('BrowserAuth', () => {
     await expect(createAuth(new RecordCredentials(), Number.MAX_SAFE_INTEGER))
       .rejects.toThrow(/safe timestamp range/u)
   })
+
+  it('automatically authenticates requests from trusted networks on GET /', async () => {
+    const store = new RecordCredentials()
+    const auth = await BrowserAuth.create(
+      {}, store as unknown as CredentialProvider, 30, ['192.168.100.0/24', '127.0.0.1'],
+    )
+
+    // 1. Request from trusted subnet without token mints cookie and redirects to /
+    const trustedReq = {
+      method: 'GET',
+      url: '/',
+      headers: { host: '192.168.100.177:3080' },
+      socket: { remoteAddress: '192.168.100.42' },
+    }
+    const resHeaders: Record<string, string> = {}
+    let resStatus = 0
+    const res = {
+      writeHead(status: number, headers?: Record<string, string>) {
+        resStatus = status
+        if (headers) Object.assign(resHeaders, headers)
+      },
+      end() {},
+    }
+    expect(auth.authorizeIndex(trustedReq, res)).toBe(false)
+    expect(resStatus).toBe(303)
+    expect(resHeaders['set-cookie']).toBeDefined()
+    expect(resHeaders['set-cookie']).toContain('dsh-auth-')
+
+    // 2. Following the redirect with the new cookie serves index (returns true)
+    const cookieValue = resHeaders['set-cookie']?.split(';')[0]?.trim()
+    const authedReq = {
+      method: 'GET',
+      url: '/',
+      headers: { host: '192.168.100.177:3080', cookie: cookieValue },
+      socket: { remoteAddress: '192.168.100.42' },
+    }
+    expect(auth.authorizeIndex(authedReq, res)).toBe(true)
+
+    // 3. Request from untrusted subnet without token is rejected with 401
+    const untrustedReq = {
+      method: 'GET',
+      url: '/',
+      headers: { host: '192.168.100.177:3080' },
+      socket: { remoteAddress: '10.0.0.1' },
+    }
+    resStatus = 0
+    expect(auth.authorizeIndex(untrustedReq, res)).toBe(false)
+    expect(resStatus).toBe(401)
+  })
 })

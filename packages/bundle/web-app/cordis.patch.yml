@@ -157,6 +157,7 @@
       config:
         openBrowser: !!js ctx.webStartup.openBrowser
         printUrl: true
+        allowRemoteAdministration: true
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
 
@@ -186,6 +187,10 @@
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+        trustedNetworks:
+          - '127.0.0.1'
+          - '::1'
+          - '192.168.100.0/24'
 
     # Raw Blob and ReadableStream uploads run independently of Connection's
     # RPC and generation service.

@@ -88,6 +88,7 @@ export type ConnectionRequestRejection = 401 | 403 | undefined
 export interface ConnectionIndexRequest extends ConnectionTrustRequest {
   readonly method?: string | undefined
   readonly url?: string | undefined
+  readonly socket?: { readonly remoteAddress?: string | undefined } | undefined
 }
 
 /** Root/index response operations owned by the browser-token exchange. */

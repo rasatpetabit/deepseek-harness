@@ -276,27 +276,29 @@ def test_no_temporary_files_survive_a_successful_write(tmp_path: Path) -> None:
 # --- the lock file sits beside the credential store, so it is private ---------
 
 
-def test_lock_file_is_created_private(tmp_path: Path) -> None:
+def test_lock_file_is_created_private_and_cleaned_on_release(tmp_path: Path) -> None:
     lock_path = str(tmp_path / "settings.yaml.lock")
-    handle = load_lock(lock_path)
+    lock = load_lock(lock_path)
     try:
-        assert handle is not None
+        assert lock is not None
         assert stat.S_IMODE(os.stat(lock_path).st_mode) == 0o600
     finally:
-        if handle is not None:
-            handle.close()
+        if lock is not None:
+            lock.release()
+    assert not os.path.exists(lock_path)
 
 
 def test_lock_file_mode_is_normalized_even_if_it_already_existed(tmp_path: Path) -> None:
     lock_path = tmp_path / "settings.yaml.lock"
     lock_path.write_text("", encoding="utf-8")
     os.chmod(lock_path, 0o644)
-    handle = load_lock(str(lock_path))
+    lock = load_lock(str(lock_path))
     try:
         assert stat.S_IMODE(os.stat(lock_path).st_mode) == 0o600
     finally:
-        if handle is not None:
-            handle.close()
+        if lock is not None:
+            lock.release()
+    assert not lock_path.exists()
 
 
 def test_a_second_concurrent_run_fails_closed(tmp_path: Path) -> None:
@@ -307,11 +309,11 @@ def test_a_second_concurrent_run_fails_closed(tmp_path: Path) -> None:
         with pytest.raises(CatalogError, match="refusing to race it"):
             load_lock(lock_path)
     finally:
-        first.close()
+        first.release()
     # Released, the lock is acquirable again.
     second = load_lock(lock_path)
     assert second is not None
-    second.close()
+    second.release()
 
 
 # --- the importer must never touch the credential store ----------------------

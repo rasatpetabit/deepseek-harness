@@ -437,14 +437,15 @@ describe('web-app runtime glue', () => {
     const remoteReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: '192.168.1.5:3080' } } as unknown as IncomingMessage
     expect(policy.authorize(remoteReq)).toEqual({ authorized: true, accessMode: 'trusted-https-proxy' })
 
-    // 2. Loopback TCP socket is always authorized as loopback
-    requestRejection.mockReturnValue(401)
+    // 2. Loopback TCP socket with authenticated session
     const loopbackReq = { socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:3080' } } as unknown as IncomingMessage
     expect(policy.authorize(loopbackReq)).toEqual({ authorized: true, accessMode: 'loopback' })
 
-    // 3. Unauthenticated off-loopback request is rejected
+    // 3. Unauthenticated request is rejected (both loopback and remote)
+    requestRejection.mockReturnValue(401)
     const unauthReq = { socket: { remoteAddress: '192.168.1.100' }, headers: { host: '192.168.1.5:3080' } } as unknown as IncomingMessage
     expect(policy.authorize(unauthReq)).toEqual({ authorized: false, reason: 'unauthorized' })
+    expect(policy.authorize(loopbackReq)).toEqual({ authorized: false, reason: 'unauthorized' })
 
     // 4. Untrusted / cross-site request is rejected as forbidden
     requestRejection.mockReturnValue(403)
@@ -452,13 +453,22 @@ describe('web-app runtime glue', () => {
     expect(policy.authorize(untrustedReq)).toEqual({ authorized: false, reason: 'forbidden' })
   })
 
-  it('injects __DSH_REMOTE_ADMINISTRATION__ into webserver index injections', () => {
+  it('injects __DSH_REMOTE_ADMINISTRATION__ only when allowRemoteAdministration is true', () => {
     stageDist()
     const ctx = new Context()
     ctx.provide('webServer', fakeHttpServer('0.0.0.0').server)
-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+    apply(ctx, new Config({
+      openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [], allowRemoteAdministration: true,
+    }))
     const table: unknown[] = []
     ctx.emit('webserver/index-inject', table as never)
     expect(table).toContainEqual({ kind: 'global', name: '__DSH_REMOTE_ADMINISTRATION__', value: true })
+
+    const ctxDefault = new Context()
+    ctxDefault.provide('webServer', fakeHttpServer('0.0.0.0').server)
+    apply(ctxDefault, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+    const tableDefault: unknown[] = []
+    ctxDefault.emit('webserver/index-inject', tableDefault as never)
+    expect(tableDefault).toEqual([])
   })
 })

@@ -35,6 +35,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function parseIpv4(ip: string): number | undefined {
+  const parts = ip.split('.')
+  if (parts.length !== 4) return undefined
+  let num = 0
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return undefined
+    const byte = Number(part)
+    if (byte < 0 || byte > 255) return undefined
+    num = (num << 8) | byte
+  }
+  return num >>> 0
+}
+
+function matchesIpv4Subnet(ipStr: string, networkStr: string): boolean {
+  const [netIp, prefixStr] = networkStr.split('/')
+  const ipNum = parseIpv4(ipStr)
+  const netNum = parseIpv4(netIp ?? '')
+  if (ipNum === undefined || netNum === undefined) return false
+  if (prefixStr === undefined) {
+    return ipNum === netNum
+  }
+  const prefix = Number(prefixStr)
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false
+  if (prefix === 0) return true
+  const mask = ((0xFFFFFFFF << (32 - prefix)) >>> 0)
+  return (ipNum & mask) === (netNum & mask)
+}
+
+function normalizePeerIp(remoteAddress: string | undefined): string | undefined {
+  if (remoteAddress === undefined) return undefined
+  const addr = remoteAddress.trim().toLowerCase()
+  if (addr.startsWith('::ffff:')) return addr.slice(7)
+  return addr
+}
+
+export function isIpInNetworks(remoteAddress: string | undefined, networks: readonly string[]): boolean {
+  const peer = normalizePeerIp(remoteAddress)
+  if (peer === undefined) return false
+  for (const network of networks) {
+    const trimmed = network.trim().toLowerCase()
+    if (trimmed === peer) return true
+    if (matchesIpv4Subnet(peer, trimmed)) return true
+  }
+  return false
+}
+
 function encodeBase64Url(value: Uint8Array): string {
   return Buffer.from(value).toString('base64')
     .replaceAll('+', '-')
@@ -185,14 +231,17 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 export class BrowserAuth {
   private readonly launchToken: string
   private readonly maxAgeMilliseconds: number
+  readonly trustedNetworks: readonly string[]
 
   private constructor(
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    trustedNetworks: readonly string[] = [],
   ) {
     this.launchToken = processLaunchToken(processOwner)
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
+    this.trustedNetworks = trustedNetworks
     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
       || !Number.isSafeInteger(Date.now() + this.maxAgeMilliseconds)) {
       throw new Error('client-connection: cookieMaxAgeDays exceeds the safe timestamp range')
@@ -205,14 +254,16 @@ export class BrowserAuth {
    * @param processOwner - root application context retaining one token across Connection reloads.
    * @param credentials - persistent credential provider for the Web profile.
    * @param maxAgeDays - positive absolute browser-cookie lifetime in days.
+   * @param trustedNetworks - optional list of subnets/IPs allowed to auto-authenticate clean root requests.
    * @returns initialized authentication owner with the process owner's launch token.
    */
   static async create(
     processOwner: object,
     credentials: CredentialProvider,
     maxAgeDays: number,
+    trustedNetworks: readonly string[] = [],
   ): Promise<BrowserAuth> {
-    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays)
+    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays, trustedNetworks)
   }
 
   /**
@@ -229,10 +280,31 @@ export class BrowserAuth {
     return url.href
   }
 
+  private mintCookieAndRedirect(res: ConnectionIndexResponse, authority: string): void {
+    const issuedAt = Date.now()
+    const expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({
+      version: COOKIE_PAYLOAD_VERSION,
+      authority,
+      issuedAt,
+      expiresAt,
+    }, this.secret)
+    res.writeHead(303, {
+      'cache-control': 'no-store',
+      'location': '/',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': sessionCookie(
+        cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
+      ),
+    })
+    res.end()
+  }
+
   /**
    * Authenticate an index request. A valid root query token mints the cookie
    * and redirects to clean `/`; a valid cookie lets the caller serve the
-   * index; every other request receives the same minimal 401 response.
+   * index; requests from trusted networks auto-mint a cookie; every other
+   * request receives the same minimal 401 response.
    * @param req - incoming root or configured-index request.
    * @param res - response owned when this method returns false.
    * @returns true only when the caller may serve index.html.
@@ -241,27 +313,11 @@ export class BrowserAuth {
     /* v8 ignore next -- node:http always supplies url on server requests. */
     const url = new URL(req.url ?? '/', 'http://dsh.invalid')
     const tokens = url.searchParams.getAll(TOKEN_QUERY)
+    const authority = requestAuthority(req.headers)
     if (tokens.length > 0) {
-      const authority = requestAuthority(req.headers)
       if (req.method === 'GET' && url.pathname === '/' && tokens.length === 1
         && authority !== undefined && tokenMatches(tokens.join(''), this.launchToken)) {
-        const issuedAt = Date.now()
-        const expiresAt = issuedAt + this.maxAgeMilliseconds
-        const value = encodeCookie({
-          version: COOKIE_PAYLOAD_VERSION,
-          authority,
-          issuedAt,
-          expiresAt,
-        }, this.secret)
-        res.writeHead(303, {
-          'cache-control': 'no-store',
-          'location': '/',
-          'referrer-policy': 'no-referrer',
-          'set-cookie': sessionCookie(
-            cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
-          ),
-        })
-        res.end()
+        this.mintCookieAndRedirect(res, authority)
         return false
       }
       if (req.method === 'GET' && url.pathname === '/' && this.isAuthenticated(req)) {
@@ -277,6 +333,13 @@ export class BrowserAuth {
       return false
     }
     if (this.isAuthenticated(req)) return true
+    // Auto-authenticate clean GET / from configured trusted networks
+    const remoteAddress = req.socket?.remoteAddress
+    if (req.method === 'GET' && url.pathname === '/' && authority !== undefined
+      && isIpInNetworks(remoteAddress, this.trustedNetworks)) {
+      this.mintCookieAndRedirect(res, authority)
+      return false
+    }
     this.writeUnauthorized(req, res)
     return false
   }
