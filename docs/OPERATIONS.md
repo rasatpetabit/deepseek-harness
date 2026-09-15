@@ -38,55 +38,29 @@ This prints both the loopback URL (`http://127.0.0.1:3080/?token=...`) and LAN U
 > **The LAN URL gives you chat, not Settings.** See section 4 before administering
 > models or OAuth from another machine.
 
-## 4. Remote Access: Chat Works Over LAN, Settings Does Not
+## 4. Remote Web Access (LAN & VPN)
 
-Two independent loopback gates apply. Both are deliberate security boundaries.
-Neither is configurable, and neither is bypassed by a reverse proxy.
+Direct browser access over your local network or VPN (`http://<lan-ip>:3080/`) is fully supported for both chat and complete administration (Settings, Models, and Coding Subscription capabilities), without needing SSH port-forwarding tunnels.
 
-### 4.1 The whole Settings UI is gated on the browser's address bar
+Security is enforced at two integrated layers:
+1. **Launch-token authentication:** Every browser session must authenticate by visiting the launch URL with `?token=...`, which issues a secure, HMAC-signed session cookie bound to the authority.
+2. **Authority & Origin Fences:** Every request must match a trusted authority (`Host`), reject cross-site initiators (`Sec-Fetch-Site: cross-site`), and reject mismatched browser origins (protecting against DNS-rebinding and CSRF attacks).
 
-The DSH **client** decides whether Settings can persist at all, from the hostname
-in the address bar:
+### 4.1 Authenticated Remote Administration
 
-| Step | Location |
-|---|---|
-| `isLoopback` derives from the page hostname | `packages/client/connection/src/client/index.ts` |
-| true only for `localhost`, `[::1]`, `127.0.0.0/8` | `packages/client/connection/src/loopback-hostname.ts` |
-| `persistence = isLoopback ? 'host' : 'memory'` | `packages/client/ui-settings/src/client/index.ts` |
-| `memory` sets `status: 'unavailable'`, terminally | `packages/client/ui-settings/src/client/settings-mirror.ts` |
-| `view === undefined` raises the error below | `packages/client/ui-settings-models/src/client/store.ts` |
+In our custom web bundle composition:
+- `ui-settings` and `ui-settings-general` are configured with `allowRemoteAdministration: true`, enabling host persistence for authenticated browser sessions regardless of whether the address bar reads localhost or a LAN IP.
+- The host provides an `ownerRequestPolicy` service to `dsh-coding-subscription-oauth`, authorizing capability toggle switches and OAuth login endpoints for any valid, authenticated DSH session.
 
-Opening the LAN URL therefore shows:
+### 4.2 Logging in from your Browser
 
-> Loading the provider directory failed: settings are unavailable in this browser
-
-This is **not** an authentication failure, a server fault, or a problem with
-`settings.yaml`. Chat works normally over LAN; only Settings is gated. Because
-the check is on the address-bar hostname, a reverse proxy does not help — the
-proxy's own hostname is still not loopback. Do not "fix" this by forcing
-`isLoopback` or adding wildcard trusted hosts; both remove a real boundary.
-
-### 4.2 The OAuth plugin additionally gates on the TCP peer
-
-`dsh-coding-subscription-oauth` rejects a non-loopback `req.socket.remoteAddress`
-on its credential and capability endpoints before any Host or Origin check, so
-its capability switches return `403 Forbidden` from a LAN browser even once
-Settings loads. Do not patch the plugin's checks in `node_modules`.
-
-### 4.3 The one supported remote path: SSH port forwarding
-
-```bash
-ssh -L 3080:localhost:3080 ras@<host-ip>
-```
-
-Then open `http://localhost:3080/?token=<token>` in your local browser. The
-address bar reads `localhost`, so `isLoopback` is true and the full Settings UI
-works — **Settings → Models** for providers, and **Settings → Coding OAuth** to
-log in to Grok, Codex, Kimi, or Claude Code.
-
-The launch token changes on every service restart; re-read it per section 3.
-
-Alternatively, manage OAuth accounts directly from the command line:
+1. Retrieve the active LAN login URL from systemd journal:
+   ```bash
+   journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
+   ```
+2. Open the printed `http://<lan-ip>:3080/?token=...` URL in your browser.
+3. The server exchanges the token for a session cookie and redirects to `/`.
+4. Navigate to **Settings → Models** to configure providers and models, or **Settings → Coding OAuth** to log in to Grok, Codex, Kimi, or Claude Code.
 
 ```bash
 DSH_HOME=/srv/deepseek-harness/data /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js plugin --profile web exec dsh-coding-oauth login codex
@@ -163,9 +137,7 @@ sudo systemctl restart dsh.service
 
 ## 8. Known Operational Limits
 
-1. **Settings Is Loopback-Only:** the entire Settings UI, including the Models
-   provider directory, is unavailable to any browser whose address bar is not
-   loopback. See section 4.1. Use the SSH tunnel; do not patch the client gate.
+1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
 2. **OAuth Flow Verification:** The plugin `dsh-coding-subscription-oauth@0.6.5` is installed and mounts successfully; live OAuth token exchanges require individual user credentials and were not executed.
 3. **Version Alignment:** Plugin 0.6.5 declares peer dependencies against DSH `0.1.1-rc.2`, whereas the monorepo is on `0.1.5-rc.2`. Startup and configuration verification succeed, but individual plugin features may encounter upstream drift.
 4. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
