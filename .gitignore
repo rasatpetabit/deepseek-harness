@@ -3,6 +3,8 @@ CLAUDE.local.md
 node_modules/
 lib/
 *.tsbuildinfo
+.pi/
+.superpowers/
 pnpm-debug.log
 .pnpm-store/
 .cache/
