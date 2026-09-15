@@ -227,12 +227,9 @@ try:
         if entry.is_dir() and not entry.name.startswith("."):
             candidates.append((entry.stat().st_mtime, entry.path))
     
-    # Sort newest-first by mtime
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    for mtime, path in candidates[keep:]:
-        if os.path.realpath(path) == active_real:
-            print(f"Preserving active release from prune: {path}")
-            continue
+    # Exclude active release from pruning candidates, keeping newest (keep - 1) rollback releases
+    non_active = [(mtime, p) for mtime, p in candidates if os.path.realpath(p) != active_real]
+    for mtime, path in non_active[max(0, keep - 1):]:
         print(f"Pruning older release: {path}")
         shutil.rmtree(path)
 except Exception as e:
@@ -240,7 +237,7 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 
-if systemctl is-active --quiet dsh.service 2>/dev/null; then
+if systemctl is-enabled --quiet dsh.service 2>/dev/null; then
   echo "Restarting dsh.service..."
   sudo systemctl restart dsh.service
 fi
