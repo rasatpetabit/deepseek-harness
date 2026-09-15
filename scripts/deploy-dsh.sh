@@ -6,6 +6,13 @@ PROD_ROOT="/srv/deepseek-harness"
 RELEASES_DIR="$PROD_ROOT/releases"
 KEEP_RELEASES=3
 
+# Validate that production roots do not resolve into /srv/dev
+PROD_REAL=$(realpath -m "$PROD_ROOT")
+if [[ "$PROD_REAL" =~ ^/srv/dev ]]; then
+  echo "ERROR: Production root $PROD_ROOT resolves into /srv/dev -> $PROD_REAL" >&2
+  exit 1
+fi
+
 # Acquire exclusive deployment lock
 mkdir -p "$PROD_ROOT"
 exec 9>"$PROD_ROOT/.deploy.lock"
@@ -25,14 +32,19 @@ TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
 RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA:0:7}"
 TARGET_DIR="$RELEASES_DIR/$RELEASE_ID"
 STAGING_DIR="$RELEASES_DIR/.staging-${RELEASE_ID}"
+TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"
+TARGET_CREATED=0
 
-# Guarantee cleanup of unpromoted staging or target directory on exit
+# Guarantee cleanup of unpromoted staging, target, or temp link on exit
 cleanup() {
   local exit_code=$?
+  if [ -L "$TEMP_LINK" ] || [ -e "$TEMP_LINK" ]; then
+    rm -f "$TEMP_LINK"
+  fi
   if [ -d "$STAGING_DIR" ]; then
     rm -rf "$STAGING_DIR"
   fi
-  if [ -d "$TARGET_DIR" ]; then
+  if [ "$TARGET_CREATED" -eq 1 ]; then
     local current_real
     current_real=$(realpath "$PROD_ROOT/current" 2>/dev/null || true)
     if [ "$current_real" != "$TARGET_DIR" ]; then
@@ -75,6 +87,7 @@ if [ -e "$TARGET_DIR" ]; then
   exit 1
 fi
 mv -T "$STAGING_DIR" "$TARGET_DIR"
+TARGET_CREATED=1
 
 # 3. Validate production boundary on final release tree:
 # Fail closed: every symlink must resolve strictly INSIDE $TARGET_DIR.
