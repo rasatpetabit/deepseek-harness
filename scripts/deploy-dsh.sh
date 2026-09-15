@@ -123,7 +123,7 @@ for root, dirs, files in os.walk(target, onerror=on_error):
             checked_links += 1
             try:
                 resolved = item.resolve(strict=True)
-                if not resolved.is_relative_to(target):
+                if not resolved.is_relative_to(target_real):
                     violations.append(f"External link forbidden: {item} -> {resolved}")
             except Exception as exc:
                 print(f"ERROR: Cannot strictly resolve symlink {item}: {exc}", file=sys.stderr)
