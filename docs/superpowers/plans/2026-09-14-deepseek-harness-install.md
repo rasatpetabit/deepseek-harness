@@ -106,7 +106,7 @@ chmod 755 /srv/deepseek-harness
 chmod 700 /srv/deepseek-harness/data
 ```
 
-- [ ] **Step 2: Create automated deploy & upgrade script with fresh build, strict boundary validation, and cleanup traps**
+- [ ] **Step 2: Create automated deploy & upgrade script with fresh build, self-contained boundary validation, and cleanup traps**
 
 Write `/srv/dev/ai/deepseek-harness/scripts/deploy-dsh.sh`:
 ```bash
@@ -133,11 +133,12 @@ TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
 RELEASE_ID="${TIMESTAMP}-$$-$RANDOM-${GIT_SHA}"
 TARGET_DIR="$RELEASES_DIR/$RELEASE_ID"
 STAGING_DIR="$RELEASES_DIR/.staging-${RELEASE_ID}"
+PROMOTED=0
 
-# Guarantee removal of failed staging directory on exit
+# Guarantee removal of unpromoted staging or target directory on exit
 cleanup() {
-  if [ -d "$STAGING_DIR" ]; then
-    rm -rf "$STAGING_DIR"
+  if [ "$PROMOTED" -eq 0 ]; then
+    rm -rf "$STAGING_DIR" "$TARGET_DIR"
   fi
 }
 trap cleanup EXIT INT TERM
@@ -160,20 +161,21 @@ rsync -a \
   --exclude='*' \
   "$DEV_ROOT/" "$STAGING_DIR/"
 
-# Move staging into permanent release directory before validation so all paths are final
+# Move staging into permanent release directory before validation
 if [ -e "$TARGET_DIR" ]; then
   echo "ERROR: Target release directory $TARGET_DIR already exists." >&2
   exit 1
 fi
 mv -T "$STAGING_DIR" "$TARGET_DIR"
 
-# 3. Validate production boundary on the final release tree: Fail closed with strict resolution
+# 3. Validate production boundary on final release tree:
+# Fail closed: every symlink must resolve strictly INSIDE $TARGET_DIR.
+# Any link outside the release directory (or failing resolution) aborts immediately.
 python3 - << PYEOF
 import os, sys
 from pathlib import Path
 
 target = Path("$TARGET_DIR")
-dev_tree = Path("/srv/dev")
 violations = []
 checked_links = 0
 
@@ -188,27 +190,26 @@ for root, dirs, files in os.walk(target, onerror=on_error):
             checked_links += 1
             try:
                 resolved = item.resolve(strict=True)
-                if resolved.is_relative_to(dev_tree):
-                    violations.append(f"{item} -> {resolved}")
-                elif not (resolved.is_relative_to(target) or str(resolved).startswith(("/usr", "/lib", "/bin"))):
-                    violations.append(f"External unverified link: {item} -> {resolved}")
+                if not resolved.is_relative_to(target):
+                    violations.append(f"External link forbidden: {item} -> {resolved}")
             except Exception as exc:
                 print(f"ERROR: Cannot strictly resolve symlink {item}: {exc}", file=sys.stderr)
                 sys.exit(2)
 
 if violations:
-    print(f"ERROR: {len(violations)} production boundary violation(s) found:", file=sys.stderr)
+    print(f"ERROR: {len(violations)} boundary violation(s) found:", file=sys.stderr)
     for v in violations[:10]:
         print(f"  {v}", file=sys.stderr)
     sys.exit(1)
 
-print(f"Production boundary check passed: {checked_links} symlinks strictly verified, 0 leaks into /srv/dev.")
+print(f"Production boundary check passed: {checked_links} symlinks strictly verified, 100% self-contained in release tree.")
 PYEOF
 
 # Atomic symlink replacement
 TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"
 ln -sfn "releases/$RELEASE_ID" "$TEMP_LINK"
 mv -Tf "$TEMP_LINK" "$PROD_ROOT/current"
+PROMOTED=1
 echo "Active release promoted to $RELEASE_ID."
 
 # Bounded release retention (keep 3 latest, never prune active release)
