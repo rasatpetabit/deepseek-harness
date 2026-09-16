@@ -26,6 +26,7 @@ catalog = runpy.run_path(str(SCRIPT))
 CatalogError = catalog["CatalogError"]
 classify = catalog["classify"]
 capacity = catalog["capacity"]
+reasoning_efforts = catalog["reasoning_efforts"]
 build_models = catalog["build_models"]
 build_provider = catalog["build_provider"]
 merge_provider = catalog["merge_provider"]
@@ -378,3 +379,82 @@ def test_main_refuses_to_write_an_empty_route(monkeypatch: pytest.MonkeyPatch, t
     ]) == 1
     assert settings.read_text(encoding="utf-8") == "agent-default-model: {provider: p, model: m}\n"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["settings.yaml"]
+
+
+# --- reasoning efforts are transcribed, never guessed -------------------------
+
+
+def test_published_map_is_transcribed_in_escalation_order() -> None:
+    info = {"thinking_level_map": {"high": "high", "low": "low", "medium": "medium"}}
+    assert reasoning_efforts(info) == {"low": "low", "medium": "medium", "high": "high"}
+
+
+def test_wire_spelling_differs_from_level_name() -> None:
+    # The value is what dispatch sends, so it need not match the key.
+    assert reasoning_efforts({"thinking_level_map": {"max": "ultra"}}) == {"max": "ultra"}
+
+
+def test_valueless_off_is_kept_because_dsh_allows_it() -> None:
+    assert reasoning_efforts({"thinking_level_map": {"off": None, "low": "low"}}) == {
+        "off": None,
+        "low": "low",
+    }
+
+
+def test_valueless_level_other_than_off_is_dropped() -> None:
+    # DSH rejects a null wire value on any level but off, so forwarding it
+    # would fail the whole route rather than describe the model.
+    assert reasoning_efforts({"thinking_level_map": {"high": None, "low": "low"}}) == {"low": "low"}
+
+
+def test_empty_wire_string_is_dropped() -> None:
+    assert reasoning_efforts({"thinking_level_map": {"low": "", "high": "high"}}) == {"high": "high"}
+
+
+def test_non_string_wire_value_is_dropped() -> None:
+    assert reasoning_efforts({"thinking_level_map": {"low": 3, "high": "high"}}) == {"high": "high"}
+
+
+def test_levels_outside_the_dsh_vocabulary_are_dropped() -> None:
+    assert reasoning_efforts({"thinking_level_map": {"turbo": "turbo", "low": "low"}}) == {"low": "low"}
+
+
+@pytest.mark.parametrize("published", [
+    None,
+    {},
+    "low,high",
+    {"off": None},
+    {"high": None, "max": None},
+    {"turbo": "turbo"},
+])
+def test_nothing_declarable_means_absent_not_a_rejected_claim(published: Any) -> None:
+    # Absent lets DSH inherit its catalog default. Emitting an empty dict, an
+    # off-only dict, or an unknown level would be refused by the schema.
+    assert reasoning_efforts({"thinking_level_map": published}) is None
+
+
+def test_missing_map_leaves_the_field_absent() -> None:
+    assert reasoning_efforts({}) is None
+
+
+def test_build_models_attaches_transcribed_efforts_only() -> None:
+    models, _ = build_models(
+        [
+            entry("vendor/thinks", mode="chat", thinking_level_map={"low": "low", "high": "high"}),
+            entry("vendor/plain", mode="chat"),
+        ],
+        allow_wildcards=False,
+        allow_other_protocols=False,
+    )
+    by_id = {m["id"]: m for m in models}
+    assert by_id["vendor/thinks"]["reasoningEfforts"] == {"low": "low", "high": "high"}
+    assert "reasoningEfforts" not in by_id["vendor/plain"]
+
+
+def test_report_counts_transcribed_efforts(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = format_report(
+        2,
+        [{"id": "a", "reasoningEfforts": {"low": "low"}}, {"id": "b"}],
+        {},
+    )
+    assert "with transcribed reasoningEfforts: 1" in report

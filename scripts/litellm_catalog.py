@@ -72,6 +72,25 @@ NON_CHAT_MODES = frozenset({
 # its own `api`, not a silent entry in a chat-completions list.
 OTHER_PROTOCOL_MODES = frozenset({"responses"})
 
+# LiteLLM publishes a model's selectable reasoning levels and their wire
+# spellings under this `model_info` key. It is the authoritative source for what
+# a model accepts: DSH's own schema docs warn that a hand-declared effort list is
+# "a claim about the endpoint, not a check of it", so this importer only ever
+# transcribes what the proxy already published and never guesses levels.
+REASONING_MAP_FIELD = "thinking_level_map"
+
+# The levels DSH's `llm-pi-ai` schema accepts as `reasoningEfforts` keys, in
+# escalation order. This mirrors `THINKING_LEVEL_GATE` in
+# packages/llm/llm-pi-ai/src/catalog.ts, which is the authority: that package's
+# zod union rejects any other key, so a level absent there cannot be declared
+# here. Literal because it is a cross-language schema contract rather than an
+# observed value - it changes only when DSH's own vocabulary changes.
+DSH_THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+
+# DSH permits a valueless wire spelling for this level alone, meaning "supported,
+# send nothing"; every other level must name the value to dispatch.
+VALUELESS_LEVEL = "off"
+
 # Heuristic name filter, applied ONLY when LiteLLM published no `mode`. This is
 # a guess, and the report says so: it is never presented as capability metadata.
 NON_CHAT_NAME = re.compile(
@@ -132,6 +151,36 @@ def capacity(model_info: dict[str, Any], litellm_params: dict[str, Any]) -> tupl
         or positive_int(litellm_params.get("max_output_tokens"))
     )
     return context, max_tokens
+
+
+def reasoning_efforts(model_info: dict[str, Any]) -> dict[str, Any] | None:
+    """Transcribe LiteLLM's published level map into a DSH `reasoningEfforts` dict.
+
+    Returns None when the proxy published nothing usable, so the field stays
+    absent and DSH inherits its catalog default rather than receiving a claim it
+    would reject. Levels the proxy leaves valueless are dropped unless they are
+    `off`, which DSH alone permits valueless; a map reduced to nothing beyond
+    `off` is likewise not emitted, because DSH refuses a list that offers no
+    thinking level. Keys outside DSH's vocabulary are dropped rather than
+    forwarded, since the schema union rejects them and one unpublished level
+    would otherwise fail the whole route.
+    """
+    published = model_info.get(REASONING_MAP_FIELD)
+    if not isinstance(published, dict) or not published:
+        return None
+    efforts: dict[str, Any] = {}
+    for level in DSH_THINKING_LEVELS:
+        if level not in published:
+            continue
+        wire = published[level]
+        if wire is None:
+            if level == VALUELESS_LEVEL:
+                efforts[level] = None
+        elif isinstance(wire, str) and wire:
+            efforts[level] = wire
+    if not any(level != VALUELESS_LEVEL for level in efforts):
+        return None
+    return efforts
 
 
 def classify(entry: dict[str, Any], *, allow_wildcards: bool, allow_other_protocols: bool) -> tuple[str | None, str]:
@@ -200,6 +249,9 @@ def build_models(entries: list[dict[str, Any]], *, allow_wildcards: bool, allow_
             profile["contextWindow"] = context
         if max_tokens is not None:
             profile["maxTokens"] = max_tokens
+        efforts = reasoning_efforts(model_info)
+        if efforts is not None:
+            profile["reasoningEfforts"] = efforts
         models.append(profile)
 
     models.sort(key=lambda item: item["id"])
@@ -367,11 +419,13 @@ def discover(base_url: str, *, timeout: float, api_key: str | None, allow_wildca
 def format_report(total: int, models: list[dict[str, Any]], rejected: dict[str, int]) -> str:
     with_context = sum(1 for model in models if "contextWindow" in model)
     with_output = sum(1 for model in models if "maxTokens" in model)
+    with_efforts = sum(1 for model in models if "reasoningEfforts" in model)
     lines = [
         f"LiteLLM model_info entries: {total}",
         f"admitted as chat-completions models: {len(models)}",
         f"  with detected contextWindow: {with_context}",
         f"  with detected maxTokens:     {with_output}",
+        f"  with transcribed reasoningEfforts: {with_efforts}",
         f"  contextWindow inherited from the DSH route default (not published by LiteLLM): {len(models) - with_context}",
         f"  maxTokens inherited from the DSH route default (not published by LiteLLM):     {len(models) - with_output}",
     ]
