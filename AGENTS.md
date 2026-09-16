@@ -1,5 +1,15 @@
 # AGENTS.md
 
+<!-- intent:consultation-rule v1 -->
+**Intent.** `INTENT.md` at the repo root states why this repo exists, what must never
+happen, what it is not, and where it is going. Before a substantive change, read it and
+state in one line which of `serves` / `neutral` / `fights` / `unavailable` the change is,
+judged against its checked sections:
+Purpose / Top invariant / Non-goals / Direction / Posture.
+`fights` or unsure stops and puts it to the owner before code is written. Its decisions
+are the owner's — amend it through the owner, never to fit the change.
+<!-- /intent:consultation-rule -->
+
 DeepSeek Harness is an all-plugin Cordis agent harness. Read [docs/architecture.md](docs/architecture.md) before changing `packages/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
 
 ## Pre-stable APIs and released Session data
