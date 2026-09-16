@@ -37,7 +37,7 @@ Direct browser access is fully automated for the private VPN/LAN network:
 
 ## 4. Remote Web Access (LAN & VPN)
 
-Direct browser access over your local network or VPN (`http://<lan-ip>:3080/`) is fully supported for both chat and complete administration (Settings, Models, and Coding Subscription capabilities), without needing SSH port-forwarding tunnels.
+Direct browser access over your local network or VPN (`http://<lan-ip>:3080/`) is fully supported for both chat and complete administration (Settings, Models, and Subscriptions capabilities), without needing SSH port-forwarding tunnels.
 
 Security is enforced at two integrated layers:
 1. **Launch-token authentication:** Every browser session must authenticate by visiting the launch URL with `?token=...`, which issues a secure, HMAC-signed session cookie bound to the authority.
@@ -47,7 +47,7 @@ Security is enforced at two integrated layers:
 
 In our custom web bundle composition:
 - `ui-settings` and `ui-settings-general` are configured with `allowRemoteAdministration: true`, enabling host persistence for authenticated browser sessions regardless of whether the address bar reads localhost or a LAN IP.
-- The host provides an `ownerRequestPolicy` service to `dsh-coding-subscription-oauth`, authorizing capability toggle switches and OAuth login endpoints for any valid, authenticated DSH session.
+- The host provides an `ownerRequestPolicy` service to `dsh-plugin-subscriptions`, authorizing capability toggle switches and OAuth login endpoints for any valid, authenticated DSH session.
 
 ### 4.2 Logging in from your Browser
 
@@ -59,26 +59,23 @@ http://192.168.100.177:3080/
 
 - When connecting from your workstation on the VPN/LAN, you are automatically logged in.
 - Navigate to **Settings → Models** to configure providers and models.
-- Navigate to **Settings → Coding OAuth** to view or toggle subscription capabilities.
+- Navigate to **Settings → Subscriptions** to connect a provider and toggle subscription capabilities.
 
-```bash
-DSH_HOME=/srv/deepseek-harness/data /usr/bin/node /srv/deepseek-harness/current/apps/cli/lib/bin.js plugin --profile web exec dsh-coding-oauth login codex
-```
-
-Note the CLI covers OAuth only. It has **no** capability-management or
-model-settings command, so it is not an alternative to the tunnel for Settings.
+Login is performed in the web UI at **Settings → Subscriptions → provider →
+Connect**. `dsh-plugin-subscriptions` documents no CLI login command, and the
+`dsh plugin` subcommand manages profile packages only (`add`, `update`), so the
+CLI is not an alternative to the browser for either login or Settings.
 
 ## 5. Model Catalog Management (LiteLLM)
 
-The deployment default agent model is `litellm/deepseek-v4.1-flash` — the
-`deepseek-official` route ships with no stored `DEEPSEEK_API_KEY` (every
-turn errors `MISSING_CREDENTIAL`), while the LiteLLM route serves the same
-model through the local gateway with no credential. Do not add a
-`reasoningEffort` override to `agent-default-model` while the default
-provider is `litellm`: the pi-ai route rejects it
-(`UNSUPPORTED_REASONING_EFFORT`). To use `deepseek-official` instead, store
-a key via **Settings → Models** first (any token value works against the
-local vLLM endpoint).
+The deployment default agent model is `deepseek-official/deepseek-v4.1-flash`
+with `reasoningEffort: high`, and a `DEEPSEEK_API_KEY` reference is stored in
+`.credentials.yaml` — without one that route errors `MISSING_CREDENTIAL` on
+every turn (any token value works against the local vLLM endpoint; store it via
+**Settings → Models**). The `litellm` route serves the same model through the
+local gateway with no credential, but do not add a `reasoningEffort` override
+to `agent-default-model` while the default provider is `litellm`: the pi-ai
+route rejects it (`UNSUPPORTED_REASONING_EFFORT`).
 
 The local LiteLLM gateway is registered as a `llm-pi-ai` provider route in
 `/srv/deepseek-harness/data/settings.yaml`. Refresh it with the deployed
@@ -116,14 +113,28 @@ Tests: `python3 -m pytest scripts/tests/test_litellm_catalog.py`
 
 ## 6. Updates and Upgrades
 
-The development checkout in `/srv/dev/ai/deepseek-harness` tracks upstream `origin/master`. To update and deploy:
+The development checkout in `/srv/dev/ai/deepseek-harness` carries a house delta on top of upstream. Integrate an upgrade on a branch first, verify it, then deploy from the dev root:
 
 ```bash
 cd /srv/dev/ai/deepseek-harness
+git fetch --tags --prune origin
 
-# Fetch and rebase local compatibility commits
-git fetch origin master
-git rebase origin/master
+# Record the house HEAD behind a safety ref before integrating: the delta is
+# 48 commits and is not recoverable from upstream if it is lost.
+git tag -f "house/pre-upgrade/$(git rev-parse --short HEAD)" HEAD
+
+# Pin the target to a published upstream release tag, not a moving branch tip.
+git worktree add -b upgrade/<tag> ".worktrees/upgrade-<tag>" master
+cd ".worktrees/upgrade-<tag>"
+git merge --no-ff <tag>
+```
+
+Verify in the worktree before integrating: `pnpm install --frozen-lockfile`, `pnpm run build`, `pnpm run typecheck`, focused tests over the house-patched packages, then the runtime catalog check in §6.1 against a scratch `DSH_HOME` with the plugin installed. The `0.1.5-rc.2` → `0.1.6-alpha.1` bump needed exactly one conflict resolution (an import block in `packages/bundle/web-app/tests/web-app.spec.ts`) and passed all of these.
+
+`deploy-dsh.sh` hardcodes `DEV_ROOT=/srv/dev/ai/deepseek-harness` and refuses a dirty tree, so it deploys the dev root's `HEAD`, never a worktree. Integrate the branch onto `master` first, then:
+
+```bash
+cd /srv/dev/ai/deepseek-harness
 
 # Build and deploy release snapshot (rebuilds, validates boundary, flips symlink, restarts service, prunes to keep 3)
 ./scripts/deploy-dsh.sh
@@ -220,13 +231,18 @@ sudo systemctl restart dsh.service
 ## 8. Known Operational Limits
 
 1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
-2. **OAuth Plugin Version:** `dsh-coding-subscription-oauth@0.8.5` is pinned in
-   the web profile and verified live on harness `0.1.5-rc.2` — the model
-   catalog returns all four OAuth routes (Grok Build, Codex, Kimi Code,
-   Claude Code) with `failures: []`. Earlier plugin versions (< 0.7.0) break
-   on this harness: `llm-pi-ai` at 0.1.5 requires a `modelErrors` profile
-   field they do not set, surfacing per provider as "Cannot read properties
-   of undefined (reading 'get')" in the model picker.
+2. **Subscription Plugin Version:** `dsh-plugin-subscriptions@0.9.2` is pinned
+   in the web profile (exact pin) and verified live on harness `0.1.5-rc.2` —
+   the model catalog returns all five subscription routes (`codex`, `claude`,
+   `grok`, `copilot`, `antigravity`) alongside `deepseek-official` and
+   `litellm`, with `failures: []`. It registers routes through `dsh-llm`'s
+   `registerAdapter` contract rather than `llm-pi-ai`, so the `modelErrors`
+   profile-field breakage that hit `llm-pi-ai`-based plugins at 0.1.5 does not
+   apply. The same pin was separately verified to mount and register all five
+   routes on harness `0.1.6-alpha.1` in a scratch profile; production does not
+   run that harness yet. Its predecessor `dsh-coding-subscription-oauth` is no
+   longer installed — versions of it below 0.7.0 broke on this harness with
+   "Cannot read properties of undefined (reading 'get')" in the model picker.
 3. **Version Alignment:** The plugin's declared BOM targets DSH `0.1.1-rc.2`
    and BOM fields are unenforced decoration (nothing in the harness reads
    them). Compatibility must be verified at runtime (see §6.1), not inferred
