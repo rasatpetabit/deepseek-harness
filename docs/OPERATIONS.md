@@ -322,23 +322,23 @@ sudo systemctl restart dsh.service
 
 1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
 2. **Subscription Plugin Version:** `dsh-plugin-subscriptions@0.9.2` is pinned
-   in the web profile (exact pin) and verified live on harness `0.1.5-rc.2` —
-   the model catalog returns all five subscription routes (`codex`, `claude`,
-   `grok`, `copilot`, `antigravity`) alongside `deepseek-official` and
-   `litellm`, with `failures: []`. It registers routes through `dsh-llm`'s
-   `registerAdapter` contract rather than `llm-pi-ai`, so the `modelErrors`
-   profile-field breakage that hit `llm-pi-ai`-based plugins at 0.1.5 does not
-   apply. The same pin was separately verified to mount and register all five
-   routes on harness `0.1.6-alpha.1` in a scratch profile; production does not
-   run that harness yet. Its predecessor `dsh-coding-subscription-oauth` is no
-   longer installed — versions of it below 0.7.0 broke on this harness with
-   "Cannot read properties of undefined (reading 'get')" in the model picker.
+   in the web profile (exact pin). It has been verified live on harness
+   `0.1.5-rc.2` and on `0.1.6-alpha.1`: the model catalog returns all five
+   subscription routes (`codex`, `claude`, `grok`, `copilot`, `antigravity`)
+   alongside `deepseek-official` and `litellm`, with `failures: []`. It
+   registers routes through `dsh-llm`'s `registerAdapter` contract rather than
+   `llm-pi-ai`, so the `modelErrors` profile-field breakage that hit
+   `llm-pi-ai`-based plugins at 0.1.5 does not apply. Its predecessor
+   `dsh-coding-subscription-oauth` is no longer installed — versions of it below
+   0.7.0 broke on this harness with "Cannot read properties of undefined
+   (reading 'get')" in the model picker.
 3. **Version Alignment:** `dsh-plugin-subscriptions` declares harness peer
    ranges of `^0.1.1-rc.2 || ^0.1.2-alpha.1` and was built against
-   `0.1.2-alpha.3`, while production runs `0.1.5-rc.2`. Those declared ranges
-   are unenforced decoration — nothing in the harness reads them — so
-   compatibility must be verified at runtime (see §6.1), not inferred from
-   package metadata. Re-verify after every plugin or harness upgrade.
+   `0.1.2-alpha.3`, while production has run harness versions well outside them
+   (`0.1.5-rc.2`, then `0.1.6-alpha.1`). Those declared ranges are unenforced
+   decoration — nothing in the harness reads them — so compatibility must be
+   verified at runtime (see §6.1), not inferred from package metadata.
+   Re-verify after every plugin or harness upgrade.
 4. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
 5. **Undetected Model Capacity:** LiteLLM publishes an output cap for only some
    models. Those without one inherit the `llm-pi-ai` route defaults
@@ -421,20 +421,20 @@ change.
    is undetermined whether the bundler resolves it at config-load time rather
    than through an import statement; removal is the dangerous direction until
    that is checked. It carries no comment saying so.
-8. **Data-root recovery is unverified.** §7 rolls back the release symlink
-   only; it does not cover the data root, which holds the settings document, the
-   credential stores, the subscription OAuth tokens, and session history. The
-   host's hourly restic job runs and last exited successfully, but its include
-   list is root-only, so whether the data root is in the backup set could not be
-   confirmed from an unprivileged session. Confirm coverage, and add a
-   pre-change state backup to §7 before any plugin or harness change that writes
-   the data root.
-9. **The `llm-pi-ai` route advertises no reasoning efforts for any model.** The
-   catalog's 16 `litellm` models all come back without a `reasoning` block,
-   while the `deepseek-official`, `codex` and `grok` routes do advertise
-   efforts. `llm-pi-ai` supports a per-model `reasoningEfforts` declaration and
-   the house settings document declares none, so effort selection is unavailable
-   for every model on the route that currently serves the session default. Not
-   fixed here: changing the production settings document is a production change
-   and needs its own verification, including which of those upstream models
-   genuinely accept an effort parameter.
+8. **The production data root is not backed up.** §7 rolls back the release
+   symlink only; it does not cover the data root, which holds the settings
+   document, the credential stores, the subscription OAuth tokens, and session
+   history. This is confirmed, not merely unverified: the host's hourly restic
+   job backs up 18 paths — `/home/ras`, `/etc`, `/usr/local/sbin`, `/var/log`,
+   `/var/backups`, `/var/spool`, `/var/lib/dpkg`,
+   `/var/lib/apt/extended_states`, `/srv/litellm`, `/srv/obs`, `/srv/yanos`,
+   six `/srv/dev/*` trees including `/srv/dev/ai`, and `/srv/agents/logistics`
+   — and `/srv/deepseek-harness` is not among them. A disk failure therefore
+   loses the browser-session HMAC secret, every subscription OAuth token, and
+   all session history permanently. The Top invariant that credentials survive
+   every maintenance act does not currently extend to surviving hardware loss.
+   The fix is one path added to `PETABIT_RESTIC_PATHS` in
+   `/etc/petabit-restic/env`; that file is shared fleet infrastructure outside
+   this repository, so it is recorded here rather than edited from here. Until
+   it lands, take a manual copy of the data root before any change that writes
+   it.
