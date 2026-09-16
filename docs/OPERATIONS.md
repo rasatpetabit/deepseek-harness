@@ -47,7 +47,7 @@ Security is enforced at two integrated layers:
 
 In our custom web bundle composition:
 - `ui-settings` and `ui-settings-general` are configured with `allowRemoteAdministration: true`, enabling host persistence for authenticated browser sessions regardless of whether the address bar reads localhost or a LAN IP.
-- The host provides an `ownerRequestPolicy` service to `dsh-plugin-subscriptions`, authorizing capability toggle switches and OAuth login endpoints for any valid, authenticated DSH session.
+- The host provides an `ownerRequestPolicy` service, and the plugin's `/api/subscriptions-auth.*` endpoints are reachable only through the connection layer's single `/api` route, which applies `connection.requestRejection(req)` — session cookie plus authority fence — before bridging. Capability toggles and OAuth login are therefore authorized for any valid, authenticated DSH session. Note that `dsh-plugin-subscriptions@0.9.2` injects `connection`, not `ownerRequestPolicy`: the service is provided but this plugin version does not consume it by name (see §10).
 
 ### 4.2 Logging in from your Browser
 
@@ -62,9 +62,11 @@ http://192.168.100.177:3080/
 - Navigate to **Settings → Subscriptions** to connect a provider and toggle subscription capabilities.
 
 Login is performed in the web UI at **Settings → Subscriptions → provider →
-Connect**. `dsh-plugin-subscriptions` documents no CLI login command, and the
-`dsh plugin` subcommand manages profile packages only (`add`, `update`), so the
-CLI is not an alternative to the browser for either login or Settings.
+Connect**. `dsh-plugin-subscriptions` documents no CLI login path, and
+`dsh plugin` is a thin forwarder that runs `pnpm <args...>` in the profile
+directory — package management only (`add`, `remove`, `update`, `why`, …),
+none of which can perform an OAuth login. The CLI is therefore not an
+alternative to the browser for either login or Settings.
 
 ## 5. Model Catalog Management (LiteLLM)
 
@@ -129,12 +131,40 @@ cd ".worktrees/upgrade-<tag>"
 git merge --no-ff <tag>
 ```
 
-Verify in the worktree before integrating: `pnpm install --frozen-lockfile`, `pnpm run build`, `pnpm run typecheck`, focused tests over the house-patched packages, then the runtime catalog check in §6.1 against a scratch `DSH_HOME` with the plugin installed. The `0.1.5-rc.2` → `0.1.6-alpha.1` bump needed exactly one conflict resolution (an import block in `packages/bundle/web-app/tests/web-app.spec.ts`) and passed all of these.
+Verify in the worktree before integrating:
 
-`deploy-dsh.sh` hardcodes `DEV_ROOT=/srv/dev/ai/deepseek-harness` and refuses a dirty tree, so it deploys the dev root's `HEAD`, never a worktree. Integrate the branch onto `master` first, then:
+```bash
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm run typecheck
+pnpm exec vitest run packages/client/connection packages/client/ui-settings \
+  packages/client/ui-settings-general packages/bundle/web-app
+python3 -m pytest scripts/tests/ -q
+```
+
+Then verify the plugin ABI at runtime against a **scratch** `DSH_HOME` — never the production data root — and on a port that is not 3080. §6.1's catalog check is written against the live production service, so retarget it here rather than following it verbatim:
+
+```bash
+export DSH_HOME=$(mktemp -d)
+node apps/cli/lib/bin.js plugin --profile web add --save-exact dsh-plugin-subscriptions@<pinned-version>
+node apps/cli/lib/bin.js web --no-open --port 3180 &   # prints its own launch URL
+# Now run §6.1's two curl commands with the port changed to 3180.
+# Pass: failures is [] and routableProviders lists every expected route.
+```
+
+The `0.1.5-rc.2` → `0.1.6-alpha.1` bump needed exactly one conflict resolution (an import block in `packages/bundle/web-app/tests/web-app.spec.ts`) and passed all of the above: 43 test files / 620 tests, 117 pytest cases, and a scratch-profile catalog returning `failures: []` with all five subscription routes routable.
+
+`deploy-dsh.sh` hardcodes `DEV_ROOT=/srv/dev/ai/deepseek-harness` and refuses a dirty tree, so it deploys the dev root's `HEAD`, never a worktree. **Integrate the branch onto `master` first.** Skipping this step deploys the pre-upgrade `HEAD` silently: a clean, un-integrated `master` passes the dirty-tree gate, and the release is staged from `git archive HEAD`.
 
 ```bash
 cd /srv/dev/ai/deepseek-harness
+git merge --ff-only upgrade/<tag>
+git worktree remove --force ".worktrees/upgrade-<tag>"
+
+# After the fast-forward the dev root's installed dependencies and build
+# outputs still match the OLD lockfile. deploy-dsh.sh reinstalls and rebuilds,
+# but any command run from the dev root before it executes stale artifacts.
+pnpm install --frozen-lockfile && pnpm run build
 
 # Build and deploy release snapshot (rebuilds, validates boundary, flips symlink, restarts service, prunes to keep 3)
 ./scripts/deploy-dsh.sh
@@ -243,10 +273,12 @@ sudo systemctl restart dsh.service
    run that harness yet. Its predecessor `dsh-coding-subscription-oauth` is no
    longer installed — versions of it below 0.7.0 broke on this harness with
    "Cannot read properties of undefined (reading 'get')" in the model picker.
-3. **Version Alignment:** The plugin's declared BOM targets DSH `0.1.1-rc.2`
-   and BOM fields are unenforced decoration (nothing in the harness reads
-   them). Compatibility must be verified at runtime (see §6.1), not inferred
-   from package metadata. Re-verify after every plugin or harness upgrade.
+3. **Version Alignment:** `dsh-plugin-subscriptions` declares harness peer
+   ranges of `^0.1.1-rc.2 || ^0.1.2-alpha.1` and was built against
+   `0.1.2-alpha.3`, while production runs `0.1.5-rc.2`. Those declared ranges
+   are unenforced decoration — nothing in the harness reads them — so
+   compatibility must be verified at runtime (see §6.1), not inferred from
+   package metadata. Re-verify after every plugin or harness upgrade.
 4. **Filesystem Sandboxing:** The systemd service runs with `ProtectSystem=strict` and `ReadWritePaths=/srv/deepseek-harness/data`. The service can read files across the system (unless protected by `ProtectHome=read-only`), but writes are restricted to its data directory.
 5. **Undetected Model Capacity:** LiteLLM publishes an output cap for only some
    models. Those without one inherit the `llm-pi-ai` route defaults
@@ -287,3 +319,45 @@ change.
    into a route declared `api: openai-completions`. LiteLLM may well translate
    between the two, but that has not been tested here. Do not pass the flag
    without first confirming DSH can serve the resulting route.
+
+## 10. Bounded Follow-Up Work (platform)
+
+Defects and dead-weight candidates in the house delta and the deploy pipeline,
+found by adversarial review of the `0.1.6-alpha.1` upgrade. Recorded rather than
+fixed, so that they are not rediscovered — recording is not remediation, and
+every item below is still open. None is a reason for an unreviewed production
+change.
+
+1. **`ownerRequestPolicy` may be dead house code.** The web-app provides it
+   unconditionally, but `dsh-plugin-subscriptions@0.9.2` injects `connection`
+   and never consumes a service by that name; authorization actually happens in
+   the connection layer's `/api` route. The provision was added for the retired
+   predecessor plugin. Confirm no other consumer exists, then drop it as part of
+   the prune-cruft pass.
+2. **`accessMode` mislabels the transport.** `ownerRequestPolicy.authorize`
+   returns `accessMode: 'trusted-https-proxy'` for every non-loopback
+   authenticated request, but the web server is plain `node:http` with no TLS
+   terminator anywhere in the composition, and the declared `'ssh-tunnel'` mode
+   is never produced. Any consumer keying policy on that label would extend
+   TLS-proxy trust to plain LAN HTTP clients.
+3. **Socket-less requests are misclassified.** `req.socket?.remoteAddress` is
+   undefined for Web Worker tunnel traffic, so same-process worker requests fall
+   into the non-loopback arm and receive the same label. The authorization
+   outcome is unchanged, so this is a labeling defect, not a bypass.
+4. **The client-bundler root resolution can silently mis-root.** The house patch
+   prefers `process.cwd()` whenever a workspace marker file exists there, so a
+   foreign enclosing workspace or a scratch directory makes the repository root
+   wrong; sourcemap paths then fail their `packages/` prefix test and degrade to
+   the untransformed value with no error. `deploy-dsh.sh` changes into
+   `DEV_ROOT` before building, so the deploy path is safe.
+5. **The deploy lock excludes concurrent deploys only.** The running service
+   never participates in that `flock`, so it provides no mutual exclusion
+   against the service's own writes. Exposure is bounded because the deploy
+   never touches the data root, and the lock inode is created before the lock is
+   actually held.
+6. **`KEEP_RELEASES=3` is a hardcoded operational tunable** with no
+   configuration seam, feeding the release-pruning bound.
+7. **`unrun@^0.3.1` is imported by nothing.** Kept during the merge because it
+   is undetermined whether the bundler resolves it at config-load time rather
+   than through an import statement; removal is the dangerous direction until
+   that is checked. It carries no comment saying so.
