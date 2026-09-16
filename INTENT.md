@@ -14,15 +14,15 @@ It carries house features upstream lacks. Automatic LAN/VPN authentication and r
 
 ## Top invariant
 
-Production never executes from the development tree. Every deploy copies a clean, committed snapshot into a self-contained release directory; a `/srv/dev` path reaching production directly, by symlink, or through a dependency tree is an error that stops the deploy.
+Production never executes from the development tree. Nothing the running service executes, resolves, or falls back to may be a path in the development tree, however it reaches production.
 
-A deployed release is always reversible. Promotion is atomic, prior releases are retained under a bounded count, and rollback is a short documented operation, so no upgrade can leave the service unrecoverable.
+A deployed release is always reversible. No upgrade may leave the service in a state that cannot be returned to a known-good one.
 
 Credentials survive every maintenance act. The browser-session signing secret and the OAuth credential stores are never rotated, overwritten, or deleted as a side effect of a model refresh, a plugin change, or an upgrade.
 
 The fork stays a thin delta on upstream. A change to an upstream-owned file carries a reason and stays surgical, so the tree never drifts into a private product that cannot follow upstream.
 
-Compatibility is proven at runtime, never inferred. A plugin or harness claim comes from a booted profile answering a real request, not from package metadata or a version range nothing enforces.
+Compatibility is proven at runtime, never inferred. A plugin or harness claim comes from a booted profile answering a real request, not from package metadata or a version range nothing enforces. What is proven is the capability surface users actually consume, not merely that a route registers and answers: a check that cannot fail when a capability disappears is not proof of compatibility.
 
 ## Non-goals
 
@@ -48,7 +48,7 @@ That bet rides on a second one: upstream stays rideable despite being a develope
 
 ## Direction
 
-Land the verified upgrade to `dsh-v0.1.6-alpha.1` on the house master branch, and treat the production deploy that follows as a separate, deliberate decision.
+Upgrade the development tree before production, and treat every deploy as a separate, deliberate decision that the upgrade does not authorize.
 
 Prune house cruft on every bump: drop dependencies nothing imports, and re-justify each patch to an upstream-owned file, removing any that upstream has since made unnecessary.
 
@@ -66,4 +66,4 @@ State only verified claims in documentation, qualify what was not verified, and 
 
 Intervene minimally in upstream code. Patches stay surgical and source-preserving, keeping upstream's structure and naming so the next merge stays small.
 
-Track upstream aggressively, accepting pre-release churn as the price of never facing a large jump again.
+Track upstream aggressively, accepting pre-release churn as the price of never facing a large jump again. Aggressive tracking protects the availability that Purpose ranks first: a service that must stay up is safer under frequent small verified bumps than under one infrequent jump whose blast radius no test pass can bound.

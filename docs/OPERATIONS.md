@@ -200,12 +200,33 @@ the model catalog:
 ```bash
 # mint a session cookie (trusted network), then request the catalog
 curl -s -c /tmp/dsh-cookie -H 'Host: 127.0.0.1:3080' http://127.0.0.1:3080/ -o /dev/null
-curl -s -b /tmp/dsh-cookie -X POST -H 'Host: 127.0.0.1:3080' \
-  -H 'Content-Type: application/json' \
-  -d '{"type":"client-request","rpcId":"v","method":"session/modelCatalog","payload":{"args":{}}}' \
-  http://127.0.0.1:3080/api/session/modelCatalog
-# pass: failures array is [] and every expected provider group lists models
+catalog() {
+  curl -s -b /tmp/dsh-cookie -X POST -H 'Host: 127.0.0.1:3080' \
+    -H 'Content-Type: application/json' \
+    -d '{"type":"client-request","rpcId":"v","method":"session/modelCatalog","payload":{"args":{}}}' \
+    http://127.0.0.1:3080/api/session/modelCatalog \
+  | python3 -c '
+import json,sys
+v=json.load(sys.stdin)["result"]["value"]
+print("failures:", v["failures"])
+print("default:", v["default"])
+for g in v["groups"]:
+    ms=g.get("models",[])
+    eff=[m for m in ms if (m.get("reasoning") or {}).get("efforts")]
+    print("%-22s models=%3d effortBearing=%d" % (g["id"], len(ms), len(eff)))
+'
+}
+# Capture the capability surface BEFORE the change, then re-run and diff after it.
+catalog | tee /tmp/catalog-before.txt
 ```
+
+**Registration is not compatibility.** A catalog that lists every route with `failures: []` while a group has silently lost its reasoning efforts passes a route-only check and is still a broken upgrade. A pass requires all three:
+
+1. `failures` is `[]`;
+2. `routableProviders` lists every expected route, and no group lost models;
+3. no group's `effortBearing` count dropped. A group that advertised reasoning efforts and now advertises none is a capability regression, not a clean upgrade.
+
+Diff the post-change output against `/tmp/catalog-before.txt`; a decrease on any line is a failure.
 
 Currently installed: `dsh-plugin-subscriptions@0.9.2` (exact pin;
 upstream `V1ki/dsh-plugin-subscriptions`). It registers five
@@ -361,3 +382,20 @@ change.
    is undetermined whether the bundler resolves it at config-load time rather
    than through an import statement; removal is the dangerous direction until
    that is checked. It carries no comment saying so.
+8. **Data-root recovery is unverified.** §7 rolls back the release symlink
+   only; it does not cover the data root, which holds the settings document, the
+   credential stores, the subscription OAuth tokens, and session history. The
+   host's hourly restic job runs and last exited successfully, but its include
+   list is root-only, so whether the data root is in the backup set could not be
+   confirmed from an unprivileged session. Confirm coverage, and add a
+   pre-change state backup to §7 before any plugin or harness change that writes
+   the data root.
+9. **The `llm-pi-ai` route advertises no reasoning efforts for any model.** The
+   catalog's 16 `litellm` models all come back without a `reasoning` block,
+   while the `deepseek-official`, `codex` and `grok` routes do advertise
+   efforts. `llm-pi-ai` supports a per-model `reasoningEfforts` declaration and
+   the house settings document declares none, so effort selection is unavailable
+   for every model on the route that currently serves the session default. Not
+   fixed here: changing the production settings document is a production change
+   and needs its own verification, including which of those upstream models
+   genuinely accept an effort parameter.
