@@ -89,6 +89,9 @@ python3 /srv/deepseek-harness/current/scripts/litellm_catalog.py
 
 # Merge into settings.yaml once the discovery report looks right.
 python3 /srv/deepseek-harness/current/scripts/litellm_catalog.py --apply
+
+# Or refresh capability while keeping the model set this deployment offers.
+python3 /srv/deepseek-harness/current/scripts/litellm_catalog.py --existing-only --apply
 sudo systemctl restart dsh.service
 ```
 
@@ -102,6 +105,27 @@ The admitted set is the importer's **selection**, not a list of individually
 verified chat models. Where LiteLLM publishes no `mode` the importer falls back
 to a name heuristic and says so in its report; an unrecognized non-empty `mode`
 is admitted. Treat the discovery report as the claim to check, not as proof.
+
+Discovery admits whatever the proxy publishes concretely, and that set is larger
+than what this deployment offers: the proxy also publishes vendor routing
+variants — `alibaba-singapore/`, `alibaba-us-east-1/`, `cheaperinference/`,
+`kimi-code/`, `ollama-cloud/`, `skynet/`, `tencent-singapore/`, `zai/`, `zenmux/`
+— over models that are separately declared bare. `--existing-only` holds the
+emitted set to the ids the target document already declares, so refreshing
+capability does not also decide what the model picker offers. It reports how many
+it held back, and refuses rather than guessing when the route declares nothing to
+preserve. Widening the offered set is a separate, deliberate act: run without the
+flag.
+
+Reasoning efforts are **transcribed, never guessed**. LiteLLM publishes each
+model's selectable levels and their wire spellings in
+`model_info.thinking_level_map`, keyed by the same vocabulary `llm-pi-ai` accepts,
+and the importer copies that map into `reasoningEfforts`. Levels the proxy leaves
+valueless are dropped except `off`, the only level DSH permits valueless; when
+nothing beyond `off` survives, the field is omitted so DSH inherits its catalog
+default rather than receiving a claim its schema refuses. Until the importer
+wrote this field, no model on the route advertised a reasoning level, so the
+effort selector never appeared for any of them.
 
 The importer **never opens the credential store**. It writes an `apiKeyEnv`
 *reference* (`LITELLM_API_KEY`); supplying that secret is a separate operator
@@ -122,8 +146,9 @@ cd /srv/dev/ai/deepseek-harness
 git fetch --tags --prune origin
 
 # Record the house HEAD behind a safety ref before integrating: the delta is
-# 48 commits and is not recoverable from upstream if it is lost.
-git tag -f "house/pre-upgrade/$(git rev-parse --short HEAD)" HEAD
+# not recoverable from upstream if it is lost.
+git tag -a "safety/pre-upgrade/$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)" \
+  -m "Safety snapshot: house master before the <tag> integration" HEAD
 
 # Pin the target to a published upstream release tag, not a moving branch tip.
 git worktree add -b upgrade/<tag> ".worktrees/upgrade-<tag>" master
@@ -141,6 +166,20 @@ pnpm exec vitest run packages/client/connection packages/client/ui-settings \
   packages/client/ui-settings-general packages/bundle/web-app
 python3 -m pytest scripts/tests/ -q
 ```
+
+**Safety-ref naming.** One scheme, derived rather than invented per occasion:
+`safety/<kind>/<UTC instant>-<short sha>`, created as an annotated tag. `<kind>`
+names what the snapshot protects — `pre-upgrade`, `pre-deploy`, `pre-import` —
+the instant is `date -u +%Y%m%dT%H%M%SZ`, the same sortable form `deploy-dsh.sh`
+stamps into its release ids, and the trailing short sha makes the protected
+commit legible from the ref name alone. Because the instant is part of the name,
+two snapshots cannot collide, so the tag never needs `-f`; forcing a safety ref
+would move the very snapshot it exists to preserve. Do not create a parallel
+backup branch — the tag *is* the snapshot, and a branch can be made from it when
+one is actually wanted. Refs of this form are kept, not pruned. The superseded
+ad-hoc refs `house/pre-upgrade/<sha>`, `house/pre-<version>-upgrade/<sha>` and
+`house-backup-pre-<version>` are retired; they embedded a target version that
+went stale on the next upgrade and did not sort.
 
 Then verify the plugin ABI at runtime against a **scratch** `DSH_HOME` — never the production data root — and on a port that is not 3080. §6.1's catalog check is written against the live production service, so retarget it here rather than following it verbatim:
 
