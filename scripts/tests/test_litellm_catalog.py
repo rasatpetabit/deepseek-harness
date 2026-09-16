@@ -27,6 +27,8 @@ CatalogError = catalog["CatalogError"]
 classify = catalog["classify"]
 capacity = catalog["capacity"]
 reasoning_efforts = catalog["reasoning_efforts"]
+declared_model_ids = catalog["declared_model_ids"]
+restrict_to_existing = catalog["restrict_to_existing"]
 build_models = catalog["build_models"]
 build_provider = catalog["build_provider"]
 merge_provider = catalog["merge_provider"]
@@ -458,3 +460,112 @@ def test_report_counts_transcribed_efforts(monkeypatch: pytest.MonkeyPatch) -> N
         {},
     )
     assert "with transcribed reasoningEfforts: 1" in report
+
+
+# --- a capability refresh does not silently change the offered set -------------
+
+
+def declared_settings(*model_ids: str) -> dict[str, Any]:
+    return {
+        "llm-pi-ai": {
+            "providers": {
+                "litellm": {"models": [{"id": mid, "name": mid} for mid in model_ids]}
+            }
+        }
+    }
+
+
+def test_declared_model_ids_reads_the_route() -> None:
+    assert declared_model_ids(declared_settings("a", "b/c"), "litellm") == {"a", "b/c"}
+
+
+@pytest.mark.parametrize("document", [
+    {},
+    {"llm-pi-ai": None},
+    {"llm-pi-ai": "nope"},
+    {"llm-pi-ai": {"providers": None}},
+    {"llm-pi-ai": {"providers": {"litellm": None}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": None}}}},
+    {"llm-pi-ai": {"providers": {"other": {}}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": [{"name": "no id"}]}}}},
+])
+def test_declared_model_ids_is_empty_rather_than_raising(document: Any) -> None:
+    assert declared_model_ids(document, "litellm") == set()
+
+
+def test_restrict_to_existing_counts_what_it_held_back() -> None:
+    models = [{"id": "keep"}, {"id": "new"}, {"id": "also-new"}]
+    retained, held = restrict_to_existing(models, {"keep", "absent"})
+    assert [m["id"] for m in retained] == ["keep"]
+    assert held == 2
+
+
+def test_existing_only_preserves_the_declared_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        yaml.safe_dump(declared_settings("vendor/keep", "vendor/gone")), encoding="utf-8"
+    )
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [
+            entry("vendor/keep", mode="chat", thinking_level_map={"low": "low"}),
+            entry("vendor/new", mode="chat", thinking_level_map={"low": "low"}),
+        ],
+    )
+
+    assert catalog["main"]([
+        "--settings", str(settings), "--apply", "--existing-only",
+    ]) == 0
+
+    written = yaml.safe_load(settings.read_text(encoding="utf-8"))
+    models = written["llm-pi-ai"]["providers"]["litellm"]["models"]
+    # `vendor/gone` is no longer published, `vendor/new` was never offered here.
+    assert [m["id"] for m in models] == ["vendor/keep"]
+    assert models[0]["reasoningEfforts"] == {"low": "low"}
+
+
+def test_existing_only_refuses_when_nothing_is_declared(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = tmp_path / "settings.yaml"
+    settings.write_text("agent-default-model: {provider: p, model: m}\n", encoding="utf-8")
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [entry("vendor/new", mode="chat")],
+    )
+
+    assert catalog["main"]([
+        "--settings", str(settings), "--apply", "--existing-only",
+    ]) == 1
+    # Nothing written: there was no set to preserve, and inventing one is not
+    # what the flag promised.
+    assert settings.read_text(encoding="utf-8") == "agent-default-model: {provider: p, model: m}\n"
+
+
+def test_existing_only_refuses_when_no_declared_model_survives_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(yaml.safe_dump(declared_settings("vendor/retired")), encoding="utf-8")
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [entry("vendor/new", mode="chat")],
+    )
+
+    assert catalog["main"]([
+        "--settings", str(settings), "--apply", "--existing-only",
+    ]) == 1
+    written = yaml.safe_load(settings.read_text(encoding="utf-8"))
+    assert [m["id"] for m in written["llm-pi-ai"]["providers"]["litellm"]["models"]] == [
+        "vendor/retired"
+    ]
+
+
+def test_report_names_held_back_models() -> None:
+    assert "held back by --existing-only" in format_report(3, [{"id": "a"}], {}, 2)
+    assert "held back" not in format_report(3, [{"id": "a"}], {})

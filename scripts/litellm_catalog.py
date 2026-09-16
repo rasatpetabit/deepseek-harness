@@ -91,6 +91,11 @@ DSH_THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max"
 # send nothing"; every other level must name the value to dispatch.
 VALUELESS_LEVEL = "off"
 
+# The settings document's address for a provider route. One spelling, used by
+# both the merge and the preservation check, so the two cannot drift apart.
+SETTINGS_SECTION = "llm-pi-ai"
+PROVIDERS_KEY = "providers"
+
 # Heuristic name filter, applied ONLY when LiteLLM published no `mode`. This is
 # a guess, and the report says so: it is never presented as capability metadata.
 NON_CHAT_NAME = re.compile(
@@ -294,26 +299,58 @@ def load_yaml_strict(path: str, *, must_exist: bool) -> dict[str, Any]:
 def merge_provider(settings: dict[str, Any], provider: str, profile: dict[str, Any]) -> dict[str, Any]:
     """Replace exactly one provider route; every other key is preserved."""
     merged = dict(settings)
-    section = merged.get("llm-pi-ai")
+    section = merged.get(SETTINGS_SECTION)
     if section is None:
         section = {}
     elif not isinstance(section, dict):
-        raise CatalogError("refusing to continue: settings 'llm-pi-ai' is not a mapping")
+        raise CatalogError(f"refusing to continue: settings '{SETTINGS_SECTION}' is not a mapping")
     else:
         section = dict(section)
 
-    providers = section.get("providers")
+    providers = section.get(PROVIDERS_KEY)
     if providers is None:
         providers = {}
     elif not isinstance(providers, dict):
-        raise CatalogError("refusing to continue: settings 'llm-pi-ai.providers' is not a mapping")
+        raise CatalogError(
+            f"refusing to continue: settings '{SETTINGS_SECTION}.{PROVIDERS_KEY}' is not a mapping"
+        )
     else:
         providers = dict(providers)
 
     providers[provider] = profile
-    section["providers"] = providers
-    merged["llm-pi-ai"] = section
+    section[PROVIDERS_KEY] = providers
+    merged[SETTINGS_SECTION] = section
     return merged
+
+
+def declared_model_ids(settings: dict[str, Any], provider: str) -> set[str]:
+    """The model ids a settings document already declares for one route."""
+    section = settings.get(SETTINGS_SECTION)
+    if not isinstance(section, dict):
+        return set()
+    providers = section.get(PROVIDERS_KEY)
+    if not isinstance(providers, dict):
+        return set()
+    route = providers.get(provider)
+    if not isinstance(route, dict):
+        return set()
+    models = route.get("models")
+    if not isinstance(models, list):
+        return set()
+    return {m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)}
+
+
+def restrict_to_existing(models: list[dict[str, Any]], declared: set[str]) -> tuple[list[dict[str, Any]], int]:
+    """Hold the emitted set to models already declared. @returns (retained, held back).
+
+    A capability refresh and a catalog refresh are different acts. Discovery
+    admits whatever the proxy now publishes concretely, and that set grows as
+    routing variants are added upstream of this tool. Preserving the declared set
+    keeps a re-declaration of capability from also changing what the picker
+    offers, which is an act to choose deliberately rather than inherit.
+    """
+    retained = [model for model in models if model["id"] in declared]
+    return retained, len(models) - len(retained)
 
 
 def render_yaml(document: dict[str, Any]) -> str:
@@ -416,7 +453,7 @@ def discover(base_url: str, *, timeout: float, api_key: str | None, allow_wildca
     return models, rejected, len(entries)
 
 
-def format_report(total: int, models: list[dict[str, Any]], rejected: dict[str, int]) -> str:
+def format_report(total: int, models: list[dict[str, Any]], rejected: dict[str, int], held_back: int = 0) -> str:
     with_context = sum(1 for model in models if "contextWindow" in model)
     with_output = sum(1 for model in models if "maxTokens" in model)
     with_efforts = sum(1 for model in models if "reasoningEfforts" in model)
@@ -429,6 +466,8 @@ def format_report(total: int, models: list[dict[str, Any]], rejected: dict[str, 
         f"  contextWindow inherited from the DSH route default (not published by LiteLLM): {len(models) - with_context}",
         f"  maxTokens inherited from the DSH route default (not published by LiteLLM):     {len(models) - with_output}",
     ]
+    if held_back:
+        lines.append(f"held back by --existing-only (declared model set preserved): {held_back}")
     if rejected:
         lines.append("rejected:")
         for reason, count in sorted(rejected.items(), key=lambda item: (-item[1], item[0])):
@@ -447,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--allow-wildcards", action="store_true", help="admit catch-all route placeholders (their capacities are route defaults, not measured)")
     parser.add_argument("--allow-other-protocols", action="store_true", help="admit `responses`-mode models into a chat-completions route")
+    parser.add_argument("--existing-only", action="store_true", help="emit only models --settings already declares for this route: refresh capability without changing the offered set")
     parser.add_argument("--settings", default="/srv/deepseek-harness/data/settings.yaml")
     parser.add_argument("--out", help="write the provider profile alone to this path instead of merging")
     parser.add_argument("--apply", action="store_true", help="merge into --settings (default: discovery only, write nothing)")
@@ -465,6 +505,24 @@ def main(argv: list[str] | None = None) -> int:
         if not models:
             raise CatalogError("discovery admitted no models; refusing to write an empty provider route")
 
+        held_back = 0
+        if args.existing_only:
+            declared = declared_model_ids(
+                load_yaml_strict(args.settings, must_exist=False), args.provider
+            )
+            if not declared:
+                raise CatalogError(
+                    f"--existing-only needs models already declared under"
+                    f" {SETTINGS_SECTION}.{PROVIDERS_KEY}.{args.provider} in {args.settings};"
+                    " found none, so there is no set to preserve"
+                )
+            models, held_back = restrict_to_existing(models, declared)
+            if not models:
+                raise CatalogError(
+                    "none of the declared models were admitted by discovery; refusing to write"
+                    " an empty provider route"
+                )
+
         profile = build_provider(
             models,
             display_name=args.display_name,
@@ -477,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({args.provider: profile}, indent=2, sort_keys=False))
             return 0
 
-        print(format_report(total, models, rejected))
+        print(format_report(total, models, rejected, held_back))
 
         if args.out:
             text = render_yaml({args.provider: profile})
