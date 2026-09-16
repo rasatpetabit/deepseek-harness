@@ -158,17 +158,28 @@ def capacity(model_info: dict[str, Any], litellm_params: dict[str, Any]) -> tupl
     return context, max_tokens
 
 
-def reasoning_efforts(model_info: dict[str, Any]) -> dict[str, Any] | None:
-    """Transcribe LiteLLM's published level map into a DSH `reasoningEfforts` dict.
+def reasoning_efforts(model_info: dict[str, Any]) -> dict[str, Any] | bool | None:
+    """Transcribe LiteLLM's published level map into a DSH `reasoningEfforts` value.
 
-    Returns None when the proxy published nothing usable, so the field stays
-    absent and DSH inherits its catalog default rather than receiving a claim it
-    would reject. Levels the proxy leaves valueless are dropped unless they are
-    `off`, which DSH alone permits valueless; a map reduced to nothing beyond
-    `off` is likewise not emitted, because DSH refuses a list that offers no
-    thinking level. Keys outside DSH's vocabulary are dropped rather than
-    forwarded, since the schema union rejects them and one unpublished level
-    would otherwise fail the whole route.
+    Three outcomes, and telling them apart is the point:
+
+    * a dict of levels, when the proxy published at least one thinking level;
+    * `False`, when the proxy published a map offering nothing beyond `off`. That
+      is a positive claim the model does not reason. Omitting the field instead
+      would leave DSH inheriting the installed catalog entry's capability, which
+      can advertise reasoning this endpoint does not serve;
+    * None, when the proxy published no usable map at all. Absent means "not
+      stated here", so DSH inherits its catalog default rather than a guess.
+
+    Levels the proxy leaves valueless are dropped unless they are `off`, the only
+    level DSH permits valueless. Keys outside DSH's vocabulary are dropped rather
+    than forwarded, because the schema union does not accept them.
+
+    Wire *values* are passed through as published and are not validated against
+    what any upstream accepts - nothing here could check that, and neither does
+    the consumer, which rejects only a null value on a level other than `off` and
+    an empty string. A spelling the provider does not honour therefore passes
+    config load and fails mid-turn at the provider.
     """
     published = model_info.get(REASONING_MAP_FIELD)
     if not isinstance(published, dict) or not published:
@@ -184,7 +195,7 @@ def reasoning_efforts(model_info: dict[str, Any]) -> dict[str, Any] | None:
         elif isinstance(wire, str) and wire:
             efforts[level] = wire
     if not any(level != VALUELESS_LEVEL for level in efforts):
-        return None
+        return False
     return efforts
 
 
@@ -324,20 +335,46 @@ def merge_provider(settings: dict[str, Any], provider: str, profile: dict[str, A
 
 
 def declared_model_ids(settings: dict[str, Any], provider: str) -> set[str]:
-    """The model ids a settings document already declares for one route."""
+    """The model ids a settings document already declares for one route.
+
+    An absent section, providers mapping, route, or models list yields the empty
+    set, which the caller treats as "nothing to preserve" and refuses on. A
+    *malformed* one is an error instead: silently contributing nothing for a
+    declared model would narrow the preserved set by exactly that model, and the
+    refresh would then drop it from the route while reporting success.
+    """
     section = settings.get(SETTINGS_SECTION)
+    if section is None:
+        return set()
     if not isinstance(section, dict):
-        return set()
+        raise CatalogError(f"refusing to continue: settings '{SETTINGS_SECTION}' is not a mapping")
     providers = section.get(PROVIDERS_KEY)
+    if providers is None:
+        return set()
     if not isinstance(providers, dict):
-        return set()
+        raise CatalogError(
+            f"refusing to continue: settings '{SETTINGS_SECTION}.{PROVIDERS_KEY}' is not a mapping"
+        )
     route = providers.get(provider)
+    if route is None:
+        return set()
     if not isinstance(route, dict):
-        return set()
+        raise CatalogError(f"refusing to continue: provider route '{provider}' is not a mapping")
     models = route.get("models")
-    if not isinstance(models, list):
+    if models is None:
         return set()
-    return {m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)}
+    if not isinstance(models, list):
+        raise CatalogError(f"refusing to continue: provider route '{provider}' models is not a list")
+    declared: set[str] = set()
+    for index, model in enumerate(models):
+        model_id = model.get("id") if isinstance(model, dict) else None
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise CatalogError(
+                f"refusing to continue: provider route '{provider}' models[{index}] has no usable"
+                " id; preserving the declared set needs every entry identifiable"
+            )
+        declared.add(model_id)
+    return declared
 
 
 def restrict_to_existing(models: list[dict[str, Any]], declared: set[str]) -> tuple[list[dict[str, Any]], int]:
@@ -348,6 +385,10 @@ def restrict_to_existing(models: list[dict[str, Any]], declared: set[str]) -> tu
     routing variants are added upstream of this tool. Preserving the declared set
     keeps a re-declaration of capability from also changing what the picker
     offers, which is an act to choose deliberately rather than inherit.
+
+    Order follows discovery, which sorts by id, so a refresh can reorder the
+    served list even when the set is unchanged. That is churn in the document,
+    not a change in what is offered.
     """
     retained = [model for model in models if model["id"] in declared]
     return retained, len(models) - len(retained)
@@ -487,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-wildcards", action="store_true", help="admit catch-all route placeholders (their capacities are route defaults, not measured)")
     parser.add_argument("--allow-other-protocols", action="store_true", help="admit `responses`-mode models into a chat-completions route")
     parser.add_argument("--existing-only", action="store_true", help="emit only models --settings already declares for this route: refresh capability without changing the offered set")
+    parser.add_argument("--allow-missing", action="store_true", help="with --existing-only, drop declared models discovery no longer returns instead of refusing; a deliberate narrowing of the offered set")
     parser.add_argument("--settings", default="/srv/deepseek-harness/data/settings.yaml")
     parser.add_argument("--out", help="write the provider profile alone to this path instead of merging")
     parser.add_argument("--apply", action="store_true", help="merge into --settings (default: discovery only, write nothing)")
@@ -517,6 +559,18 @@ def main(argv: list[str] | None = None) -> int:
                     " found none, so there is no set to preserve"
                 )
             models, held_back = restrict_to_existing(models, declared)
+            # Intersecting is not preserving. A partial discovery - a proxy
+            # outage, a renamed upstream id, or a declared wildcard entry this
+            # run was not told to admit - would write a route offering fewer
+            # models than it was asked to keep, and report success. Refuse and
+            # name what is missing; dropping a model is the operator's call.
+            missing = sorted(declared - {model["id"] for model in models})
+            if missing and not args.allow_missing:
+                raise CatalogError(
+                    "discovery did not return every declared model, so preserving the set would"
+                    " silently narrow it; missing: " + ", ".join(missing)
+                    + ". Re-run with --allow-missing to drop them deliberately."
+                )
             if not models:
                 raise CatalogError(
                     "none of the declared models were admitted by discovery; refusing to write"
@@ -532,6 +586,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         if args.json:
+            # The machine-readable path keeps stdout pure JSON, so the narrowing
+            # signal goes to stderr rather than being dropped: a consumer of
+            # this path must still be able to tell a filtered profile from a
+            # complete one.
+            if held_back:
+                print(
+                    f"held back by --existing-only (declared model set preserved): {held_back}",
+                    file=sys.stderr,
+                )
             print(json.dumps({args.provider: profile}, indent=2, sort_keys=False))
             return 0
 

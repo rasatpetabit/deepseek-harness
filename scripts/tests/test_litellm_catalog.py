@@ -10,6 +10,7 @@ so this file is invoked explicitly.
 
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import stat
@@ -388,12 +389,22 @@ def test_main_refuses_to_write_an_empty_route(monkeypatch: pytest.MonkeyPatch, t
 
 def test_published_map_is_transcribed_in_escalation_order() -> None:
     info = {"thinking_level_map": {"high": "high", "low": "low", "medium": "medium"}}
-    assert reasoning_efforts(info) == {"low": "low", "medium": "medium", "high": "high"}
+    result = reasoning_efforts(info)
+    assert result == {"low": "low", "medium": "medium", "high": "high"}
+    # Dict equality ignores insertion order, so it cannot prove this on its own.
+    # The emitted document preserves order and a consumer may read escalation.
+    assert list(result) == ["low", "medium", "high"]
 
 
 def test_wire_spelling_differs_from_level_name() -> None:
     # The value is what dispatch sends, so it need not match the key.
     assert reasoning_efforts({"thinking_level_map": {"max": "ultra"}}) == {"max": "ultra"}
+
+
+def test_arbitrary_wire_value_is_forwarded_for_any_level() -> None:
+    # Nothing here validates a spelling against what an upstream accepts, and
+    # forwarding is the point: the proxy published it, so it is the authority.
+    assert reasoning_efforts({"thinking_level_map": {"low": "banana"}}) == {"low": "banana"}
 
 
 def test_valueless_off_is_kept_because_dsh_allows_it() -> None:
@@ -403,9 +414,20 @@ def test_valueless_off_is_kept_because_dsh_allows_it() -> None:
     }
 
 
+def test_off_may_also_carry_a_wire_value() -> None:
+    # Live proxies publish both spellings for off. A non-empty string is
+    # accepted for off exactly as for any other level, and means "send this".
+    assert reasoning_efforts({"thinking_level_map": {"off": "none", "low": "low"}}) == {
+        "off": "none",
+        "low": "low",
+    }
+
+
 def test_valueless_level_other_than_off_is_dropped() -> None:
-    # DSH rejects a null wire value on any level but off, so forwarding it
-    # would fail the whole route rather than describe the model.
+    # DSH rejects a null wire value on any level but off. Under the adapter's
+    # deferred validation such a model is recorded in modelErrors and skipped
+    # rather than taking the route down, so dropping the level here is what
+    # keeps the model serving at all.
     assert reasoning_efforts({"thinking_level_map": {"high": None, "low": "low"}}) == {"low": "low"}
 
 
@@ -421,18 +443,41 @@ def test_levels_outside_the_dsh_vocabulary_are_dropped() -> None:
     assert reasoning_efforts({"thinking_level_map": {"turbo": "turbo", "low": "low"}}) == {"low": "low"}
 
 
+def test_valueless_level_constant_is_itself_a_legal_level() -> None:
+    # Were VALUELESS_LEVEL ever named outside the vocabulary, the branch that
+    # keeps it would be unreachable and the transcription guarantee void, with
+    # nothing else to catch it.
+    assert catalog["VALUELESS_LEVEL"] in catalog["DSH_THINKING_LEVELS"]
+
+
 @pytest.mark.parametrize("published", [
     None,
     {},
     "low,high",
+    ["low", "high"],
+    3,
+    True,
+])
+def test_unusable_map_means_absent_not_a_claim(published: Any) -> None:
+    # Absent means nothing was stated here, so DSH inherits its catalog default.
+    assert reasoning_efforts({"thinking_level_map": published}) is None
+
+
+@pytest.mark.parametrize("published", [
     {"off": None},
+    {"off": "none"},
     {"high": None, "max": None},
     {"turbo": "turbo"},
+    {"off": None, "high": None},
+    {"off": None, "turbo": "turbo"},
 ])
-def test_nothing_declarable_means_absent_not_a_rejected_claim(published: Any) -> None:
-    # Absent lets DSH inherit its catalog default. Emitting an empty dict, an
-    # off-only dict, or an unknown level would be refused by the schema.
-    assert reasoning_efforts({"thinking_level_map": published}) is None
+def test_map_offering_no_thinking_level_declares_non_reasoning(published: Any) -> None:
+    # A map was published, and it offers no thinking level. DSH refuses an empty
+    # or off-only effort list, and omitting the field would leave the model
+    # inheriting the installed catalog's capability - possibly advertising
+    # reasoning this endpoint does not serve. False is the spelling that
+    # positively declares a non-reasoning model.
+    assert reasoning_efforts({"thinking_level_map": published}) is False
 
 
 def test_missing_map_leaves_the_field_absent() -> None:
@@ -482,15 +527,34 @@ def test_declared_model_ids_reads_the_route() -> None:
 @pytest.mark.parametrize("document", [
     {},
     {"llm-pi-ai": None},
-    {"llm-pi-ai": "nope"},
     {"llm-pi-ai": {"providers": None}},
     {"llm-pi-ai": {"providers": {"litellm": None}}},
+    {"llm-pi-ai": {"providers": {"litellm": {}}}},
     {"llm-pi-ai": {"providers": {"litellm": {"models": None}}}},
     {"llm-pi-ai": {"providers": {"other": {}}}},
-    {"llm-pi-ai": {"providers": {"litellm": {"models": [{"name": "no id"}]}}}},
 ])
-def test_declared_model_ids_is_empty_rather_than_raising(document: Any) -> None:
+def test_declared_model_ids_is_empty_when_nothing_is_declared(document: Any) -> None:
+    # Absent means there is no set to preserve, which the caller refuses on.
     assert declared_model_ids(document, "litellm") == set()
+
+
+@pytest.mark.parametrize("document", [
+    {"llm-pi-ai": "nope"},
+    {"llm-pi-ai": {"providers": "nope"}},
+    {"llm-pi-ai": {"providers": {"litellm": "nope"}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": "nope"}}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": [None]}}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": [{"name": "no id"}]}}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": [{"id": "   "}]}}}},
+    {"llm-pi-ai": {"providers": {"litellm": {"models": [{"id": "ok"}, {"name": "no id"}]}}}},
+])
+def test_declared_model_ids_refuses_a_malformed_document(document: Any) -> None:
+    # Skipping a malformed entry would narrow the preserved set by exactly that
+    # model, and the refresh would then drop it from the route while reporting
+    # success. The mixed case is the dangerous one: one unusable entry among
+    # otherwise valid ones yields a plausible-looking smaller set.
+    with pytest.raises(CatalogError):
+        declared_model_ids(document, "litellm")
 
 
 def test_restrict_to_existing_counts_what_it_held_back() -> None:
@@ -504,9 +568,7 @@ def test_existing_only_preserves_the_declared_set(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     settings = tmp_path / "settings.yaml"
-    settings.write_text(
-        yaml.safe_dump(declared_settings("vendor/keep", "vendor/gone")), encoding="utf-8"
-    )
+    settings.write_text(yaml.safe_dump(declared_settings("vendor/keep")), encoding="utf-8")
     monkeypatch.setitem(
         catalog["main"].__globals__,
         "fetch_model_info",
@@ -522,13 +584,13 @@ def test_existing_only_preserves_the_declared_set(
 
     written = yaml.safe_load(settings.read_text(encoding="utf-8"))
     models = written["llm-pi-ai"]["providers"]["litellm"]["models"]
-    # `vendor/gone` is no longer published, `vendor/new` was never offered here.
+    # `vendor/new` was discovered but was never offered here, so it is held back.
     assert [m["id"] for m in models] == ["vendor/keep"]
     assert models[0]["reasoningEfforts"] == {"low": "low"}
 
 
 def test_existing_only_refuses_when_nothing_is_declared(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     settings = tmp_path / "settings.yaml"
     settings.write_text("agent-default-model: {provider: p, model: m}\n", encoding="utf-8")
@@ -541,16 +603,20 @@ def test_existing_only_refuses_when_nothing_is_declared(
     assert catalog["main"]([
         "--settings", str(settings), "--apply", "--existing-only",
     ]) == 1
+    # The intended refusal, not merely some failure: an unwired or renamed flag
+    # must not pass this test by exiting nonzero for an unrelated reason.
+    assert "no set to preserve" in capsys.readouterr().err
     # Nothing written: there was no set to preserve, and inventing one is not
     # what the flag promised.
     assert settings.read_text(encoding="utf-8") == "agent-default-model: {provider: p, model: m}\n"
 
 
 def test_existing_only_refuses_when_no_declared_model_survives_discovery(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     settings = tmp_path / "settings.yaml"
-    settings.write_text(yaml.safe_dump(declared_settings("vendor/retired")), encoding="utf-8")
+    original = yaml.safe_dump(declared_settings("vendor/retired"))
+    settings.write_text(original, encoding="utf-8")
     monkeypatch.setitem(
         catalog["main"].__globals__,
         "fetch_model_info",
@@ -560,12 +626,84 @@ def test_existing_only_refuses_when_no_declared_model_survives_discovery(
     assert catalog["main"]([
         "--settings", str(settings), "--apply", "--existing-only",
     ]) == 1
+    assert "vendor/retired" in capsys.readouterr().err
+    # Byte-identical, not merely still-containing-the-model: a refusal that
+    # rewrote or reformatted the document first would otherwise pass.
+    assert settings.read_text(encoding="utf-8") == original
+
+
+def test_existing_only_refuses_a_partial_discovery_rather_than_narrowing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The case an intersection hides: discovery returns SOME declared models, so
+    # a non-empty result looks like success while silently dropping the rest.
+    settings = tmp_path / "settings.yaml"
+    original = yaml.safe_dump(declared_settings("vendor/keep", "vendor/gone"))
+    settings.write_text(original, encoding="utf-8")
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [entry("vendor/keep", mode="chat")],
+    )
+
+    assert catalog["main"]([
+        "--settings", str(settings), "--apply", "--existing-only",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert "vendor/gone" in err
+    assert "--allow-missing" in err
+    assert settings.read_text(encoding="utf-8") == original
+
+
+def test_allow_missing_drops_a_declared_model_deliberately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        yaml.safe_dump(declared_settings("vendor/keep", "vendor/gone")), encoding="utf-8"
+    )
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [
+            entry("vendor/keep", mode="chat", thinking_level_map={"low": "low"}),
+        ],
+    )
+
+    assert catalog["main"]([
+        "--settings", str(settings), "--apply", "--existing-only", "--allow-missing",
+    ]) == 0
     written = yaml.safe_load(settings.read_text(encoding="utf-8"))
     assert [m["id"] for m in written["llm-pi-ai"]["providers"]["litellm"]["models"]] == [
-        "vendor/retired"
+        "vendor/keep"
     ]
 
 
-def test_report_names_held_back_models() -> None:
-    assert "held back by --existing-only" in format_report(3, [{"id": "a"}], {}, 2)
+def test_json_path_still_signals_the_narrowing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(yaml.safe_dump(declared_settings("vendor/keep")), encoding="utf-8")
+    monkeypatch.setitem(
+        catalog["main"].__globals__,
+        "fetch_model_info",
+        lambda *a, **k: [
+            entry("vendor/keep", mode="chat"),
+            entry("vendor/new", mode="chat"),
+        ],
+    )
+
+    assert catalog["main"](["--settings", str(settings), "--existing-only", "--json"]) == 0
+    captured = capsys.readouterr()
+    # stdout stays pure JSON so a consumer can parse it; the signal is on stderr
+    # rather than dropped, which is what returning early used to do.
+    assert [m["id"] for m in json.loads(captured.out)["litellm"]["models"]] == ["vendor/keep"]
+    assert "held back by --existing-only" in captured.err
+
+
+def test_report_states_the_held_back_count() -> None:
+    report = format_report(3, [{"id": "a"}], {}, 2)
+    # The count is the operator's only signal that the set was narrowed, so it
+    # has to be the real number and not merely a phrase saying something was.
+    assert "held back by --existing-only (declared model set preserved): 2" in report
     assert "held back" not in format_report(3, [{"id": "a"}], {})
