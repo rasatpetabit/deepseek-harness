@@ -348,13 +348,25 @@ sudo systemctl restart dsh.service
 6. **No Backup Trash In The Data Directory:** `/srv/AGENTS.md` forbids leaving
    `.bak`/`.backup` files in a production root. The importer writes one bounded
    `settings.yaml.bak`; delete it once the result is reviewed, or pass
-   `--no-backup`. `settings.yaml.lock` is a legitimate persistent `flock` inode
-   and is expected to remain.
+   `--no-backup`. `settings.yaml.lock` is transient — `FileLock.release()`
+   unlinks it — so seeing no lock file after a run is correct, and one left
+   behind means a run died before releasing it.
 7. **Deployed Versus Committed:** the running release is built from a specific
    commit — check it with `basename "$(readlink -f /srv/deepseek-harness/current)"`
    and compare against `git log`. Commits landed after the last deploy are
    **not** in production. Do not assume a source fix is live, and do not redeploy
-   merely to synchronize documentation.
+   merely to synchronize documentation. A fix to a tool operators run *from the
+   release tree* — the importer among them — is not documentation; the runbook
+   points at that copy, so a stale one is a trap.
+8. **A rejected model disappears quietly.** The running adapter materializes the
+   catalog under *deferred* validation, so a model entry DSH rejects is recorded
+   in `modelErrors` and skipped while its siblings keep serving; only strict
+   validation, which the adapter does not use, would abort the route. The catalog
+   response exposes `default`, `routableProviders`, `groups` and `failures` — it
+   does **not** expose `modelErrors`, and `failures` stays empty when a single
+   model was dropped. A silently skipped model is therefore visible only as a
+   lower model count for its group, which is why §6.1 compares per-group counts
+   against a pre-change baseline instead of asserting only that routes answer.
 
 ## 9. Bounded Follow-Up Work
 
