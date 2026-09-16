@@ -70,6 +70,16 @@ model-settings command, so it is not an alternative to the tunnel for Settings.
 
 ## 5. Model Catalog Management (LiteLLM)
 
+The deployment default agent model is `litellm/deepseek-v4.1-flash` — the
+`deepseek-official` route ships with no stored `DEEPSEEK_API_KEY` (every
+turn errors `MISSING_CREDENTIAL`), while the LiteLLM route serves the same
+model through the local gateway with no credential. Do not add a
+`reasoningEffort` override to `agent-default-model` while the default
+provider is `litellm`: the pi-ai route rejects it
+(`UNSUPPORTED_REASONING_EFFORT`). To use `deepseek-official` instead, store
+a key via **Settings → Models** first (any token value works against the
+local vLLM endpoint).
+
 The local LiteLLM gateway is registered as a `llm-pi-ai` provider route in
 `/srv/deepseek-harness/data/settings.yaml`. Refresh it with the deployed
 importer — run it from the release tree, never from `/srv/dev`:
@@ -172,6 +182,25 @@ profiles. Log in per route via the web UI **Settings → Subscriptions** —
 remote settings administration is enabled for the trusted LAN (§5), so this
 works from a VPN browser. Back up `.credentials.json` before any plugin
 downgrade.
+
+Also installed: `@vectorize-io/hindsight-coding-agents@0.6.1` (exact pin;
+the official Hindsight coding-agents plugin). It mounts on the host plane
+and gives every session long-term memory against the fleet Hindsight server
+— recall injection at step time, knowledge-page tools, and background
+gitlog/conversation ingestion into a per-repo bank
+(`coding-agent::{gitProject}`).
+
+**Hindsight configuration.** Server URL and token live in the shared
+`~/.hindsight/coding-agent.json` (read-only to the service; the same file
+every Hindsight coding-agent harness reads). Diagnostic logs are redirected
+into the writable data root by the operator-approved drop-in
+`/etc/systemd/system/dsh.service.d/hindsight.conf` (`HINDSIGHT_LOG_FILE`,
+`HINDSIGHT_DIAG_FILE`, `HINDSIGHT_USAGE_FILE` →
+`/srv/deepseek-harness/data/hindsight/`); without it the service sandbox
+(`ProtectHome=read-only`) silently swallows the plugin's log writes.
+Verify health via `diag.jsonl` `inject_ok`/`reflect_ok` events, or in a
+session call the `hindsight_sync_status` tool — `"synced": true` means the
+bank is seeded and queryable.
 
 ## 7. Rollback
 
