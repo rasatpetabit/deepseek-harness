@@ -347,6 +347,19 @@ coverage was added, and is the check to run if the include list is ever changed
 again. Note that `--path` on `restore` also filters snapshots rather than files;
 `--include` is what narrows the restored set.
 
+One exclusion applies. The host exclude list (`/etc/petabit-restic/excludes`,
+whose stated policy is "keep system/config state, skip rebuildable bulk") drops
+`**/node_modules`, so a restore returns each profile's manifests but not its
+installed plugin tree. That is recoverable rather than lost: `package.json` and
+`pnpm-lock.yaml` are both inside the backed-up profile, and the lockfile pins the
+plugins exactly, so a `pnpm install` in the restored profile rebuilds the tree.
+Everything else under the data root — credentials, subscription OAuth tokens,
+settings, sessions, storages — is captured; comparing a snapshot listing against
+the live tree found no entry missing outside `node_modules`. Run that comparison
+again after any change to the include or exclude list, since both are fleet-wide
+files owned elsewhere and neither will fail loudly if this path stops being
+covered.
+
 ## 8. Known Operational Limits
 
 1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
