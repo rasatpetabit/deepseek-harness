@@ -318,6 +318,35 @@ sudo ln -sfn "releases/<previous-release-id>" /srv/deepseek-harness/current
 sudo systemctl restart dsh.service
 ```
 
+That reverses **code only**, and code needs no backup of its own: each release is
+a `git archive` of a tagged commit, and the `safety/*` tags keep a pruned
+release's source rebuildable.
+
+The data root is the part git does not hold — the browser-session HMAC secret,
+the subscription OAuth tokens, provider routes, and session history. The symlink
+never touches it, so rolling back a release does not roll back state, and a state
+change needs its own restore. The data root is in the host's hourly restic set
+(`/srv/deepseek-harness/data` in `PETABIT_RESTIC_PATHS`, in
+`/etc/petabit-restic/env`):
+
+```bash
+# Confirm the newest snapshot contains the data root.
+sudo bash -c 'set -a; . /etc/petabit-restic/env; set +a; \
+  restic ls latest --path /srv/deepseek-harness/data | head'
+
+# Restore one file elsewhere, review it, then put it back yourself.
+sudo bash -c 'set -a; . /etc/petabit-restic/env; set +a; \
+  restic restore latest --target /tmp/dsh-restore \
+  --include /srv/deepseek-harness/data/settings.yaml'
+```
+
+Both are read-only against the repository. `--path` with `latest` selects the
+newest snapshot *including that path*, so `no snapshot found` means the data root
+is in no snapshot yet — which is exactly what that command reported before
+coverage was added, and is the check to run if the include list is ever changed
+again. Note that `--path` on `restore` also filters snapshots rather than files;
+`--include` is what narrows the restored set.
+
 ## 8. Known Operational Limits
 
 1. **Remote Administration Authorization:** Remote settings and capability administration over LAN/VPN requires a valid, authenticated browser session cookie minted from the launch token. Unauthenticated or cross-site requests are refused.
@@ -433,20 +462,3 @@ change.
    is undetermined whether the bundler resolves it at config-load time rather
    than through an import statement; removal is the dangerous direction until
    that is checked. It carries no comment saying so.
-8. **The production data root is not backed up.** §7 rolls back the release
-   symlink only; it does not cover the data root, which holds the settings
-   document, the credential stores, the subscription OAuth tokens, and session
-   history. This is confirmed, not merely unverified: the host's hourly restic
-   job backs up 18 paths — `/home/ras`, `/etc`, `/usr/local/sbin`, `/var/log`,
-   `/var/backups`, `/var/spool`, `/var/lib/dpkg`,
-   `/var/lib/apt/extended_states`, `/srv/litellm`, `/srv/obs`, `/srv/yanos`,
-   six `/srv/dev/*` trees including `/srv/dev/ai`, and `/srv/agents/logistics`
-   — and `/srv/deepseek-harness` is not among them. A disk failure therefore
-   loses the browser-session HMAC secret, every subscription OAuth token, and
-   all session history permanently. The Top invariant that credentials survive
-   every maintenance act does not currently extend to surviving hardware loss.
-   The fix is one path added to `PETABIT_RESTIC_PATHS` in
-   `/etc/petabit-restic/env`; that file is shared fleet infrastructure outside
-   this repository, so it is recorded here rather than edited from here. Until
-   it lands, take a manual copy of the data root before any change that writes
-   it.
