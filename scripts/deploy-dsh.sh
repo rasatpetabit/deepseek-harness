@@ -19,6 +19,17 @@ mkdir -p "$PROD_ROOT"
 exec 9>"$PROD_ROOT/.deploy.lock"
 flock -n 9 || { echo "ERROR: Deployment lock busy; another deploy is running." >&2; exit 1; }
 
+# Fail closed on an unprovisioned host. This script restarts an existing unit;
+# it never creates one. Without this guard a host that has never run the install
+# step is handed a promoted release with no service, and the run still reports
+# "Deploy complete" (the 2026-09-16 ai-vm cutover).
+if ! systemctl cat dsh.service >/dev/null 2>&1; then
+  echo "ERROR: dsh.service is not installed on this host; refusing to deploy." >&2
+  echo "  This script only restarts an existing unit. Install it first:" >&2
+  echo "  docs/superpowers/specs/2026-09-14-deepseek-harness-install-design.md section 2.5" >&2
+  exit 1
+fi
+
 cd "$DEV_ROOT"
 
 # Ensure repository worktree is committed and clean
@@ -148,10 +159,16 @@ mv -Tf "$TEMP_LINK" "$PROD_ROOT/current"
 PROMOTED=1
 echo "Active release promoted to $RELEASE_ID."
 
-# Restart service immediately following promotion
-if systemctl is-enabled --quiet dsh.service 2>/dev/null || systemctl is-active --quiet dsh.service 2>/dev/null; then
-  echo "Restarting dsh.service to active release..."
-  sudo systemctl restart dsh.service
+# Restart service immediately following promotion, then prove it came back. A
+# promoted release behind a unit that is not running is a failed deploy, not a
+# successful one, and must never report success.
+echo "Restarting dsh.service to active release..."
+sudo systemctl restart dsh.service
+if ! systemctl is-active --quiet dsh.service; then
+  echo "ERROR: dsh.service is not active after restart. Release $RELEASE_ID is promoted but not serving." >&2
+  echo "  Previous releases are retained in $RELEASES_DIR; roll $PROD_ROOT/current back if needed." >&2
+  sudo systemctl status dsh.service --no-pager >&2 || true
+  exit 1
 fi
 
 # Bounded release retention per /srv/AGENTS.md: mtime newest-first, protected active release
