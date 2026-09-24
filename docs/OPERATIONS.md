@@ -29,7 +29,7 @@ journalctl -u dsh.service -n 50 --no-pager
 
 Direct browser access is fully automated for the private VPN/LAN network:
 
-- **Automatic Login on VPN/LAN:** When navigating to `http://192.168.100.177:3080/` from any device on `192.168.100.0/24`, the server recognizes the trusted subnet, automatically mints a signed 30-day session cookie, and logs you into the Web GUI with zero manual token steps.
+- **Automatic Login on VPN/LAN:** When navigating to `http://192.168.100.200:3080/` from any device on `192.168.100.0/24`, the server recognizes the trusted subnet, automatically mints a signed 30-day session cookie, and logs you into the Web GUI with zero manual token steps.
 - **Manual Launch Token (Off-subnet):** If connecting from outside the configured `trustedNetworks`, visiting `/` requires the launch token printed at startup:
   ```bash
   journalctl -u dsh.service -n 30 --no-pager | grep "dsh web: http" | tail -n 1
@@ -54,7 +54,7 @@ In our custom web bundle composition:
 Simply navigate directly to the application in your browser:
 
 ```
-http://192.168.100.177:3080/
+http://192.168.100.200:3080/
 ```
 
 - When connecting from your workstation on the VPN/LAN, you are automatically logged in.
