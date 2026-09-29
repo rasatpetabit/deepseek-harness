@@ -86,8 +86,11 @@ mkdir -p "$STAGING_DIR"
 # 1. Populate source strictly from clean git archive of HEAD
 git archive HEAD | tar -x -C "$STAGING_DIR"
 
-# 2. Overlay verified build outputs, native addons, and node_modules from workspace
+# 2. Overlay verified build outputs, native addons, and node_modules from workspace.
+#    '.git/' is excluded before '*/' (rsync takes the first match): otherwise the
+#    dev checkout's .git directory skeleton lands in every release.
 rsync -a \
+  --exclude='.git/' \
   --include='*/' \
   --include='dist/***' \
   --include='lib/***' \
