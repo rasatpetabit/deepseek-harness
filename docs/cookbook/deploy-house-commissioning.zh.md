@@ -23,7 +23,7 @@ sudo bash "$RELEASE/scripts/commission-dsh.sh" prepare "$RELEASE" "$SHA"
 
 ### 不重启 DSH，更新一个精确 VPN 客户端
 
-将 `DSH_EXTRA_CLIENT_CIDRS` 设为以空白分隔的已批准客户端 CIDR，值须来自不含查询参数的入口访问日志或部署配置。每项必须是显式单地址 `/32` 或 `/128`；子网、裸地址及格式错误的输入会失败，且不改变生成的入口配置。省略变量会复用 `/etc/dsh-edge/client-cidrs.conf`；设为空字符串则清除额外客户端。准备验证条目并保存到 root 所有、权限为 0600 的数据文件。现有 LAN 规则及服务器级 deny-all 仍适用于根路径、API 和 WebSocket；Host、Origin 及 cookie 要求不变。
+将 `DSH_EXTRA_CLIENT_CIDRS` 设为以空白分隔的已批准客户端 CIDR，值须来自不含查询参数的入口访问日志或部署配置。每项必须使用规范单地址 `/32` 或 `/128` 语法且不含 IPv6 scope 标识符；子网、裸地址及格式错误的输入会失败，且不改变已保存的批准条目或生成的配置。准备先用 `nginx -t` 检查私有候选配置，再逐个原子替换已发布的配置文件；语法检查失败时现有文件保持不变。省略变量会复用 `/etc/dsh-edge/client-cidrs.conf`；设为空字符串则清除额外客户端。准备验证条目并保存到 root 所有、权限为 0600 的数据文件。现有 LAN 规则及服务器级 deny-all 仍适用于根路径、API 和 WebSocket；Host、Origin 及 cookie 要求不变。
 
 仅修正入口时，将已审阅提交的投产工具及配套模板安装在 `/srv/dev` 之外；不要修改运行版本。`TOOL_SHA` 标识干净且已审阅的工具提交，`RELEASE` 和 `SHA` 标识不变的线上版本。不需要构建：
 

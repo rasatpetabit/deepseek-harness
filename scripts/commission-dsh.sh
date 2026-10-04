@@ -35,7 +35,7 @@ prepare)
   install -d -m 755 /etc/dsh-edge /var/log/dsh-edge /run/dsh-edge
   # Use the committed tool's matching template, even when preparing an older release.
   python3 - "$(dirname "$(realpath -e "$0")")/deploy/nginx-dsh.conf.template" <<'PY'
-import ipaddress, os, re, sys
+import ipaddress, os, re, subprocess, sys, tempfile
 from pathlib import Path
 approved = Path('/etc/dsh-edge/client-cidrs.conf')
 if approved.is_symlink():
@@ -46,11 +46,15 @@ if raw is None:
 clients = []
 for value in raw.split():
     try:
+        if '%' in value:
+            raise ValueError('IPv6 scope identifiers are not permitted')
         if '/' not in value:
             raise ValueError('explicit CIDR required')
         network = ipaddress.ip_network(value, strict=True)
         if network.prefixlen != network.max_prefixlen:
             raise ValueError('only exact client /32 or /128 permitted')
+        if value != str(network):
+            raise ValueError('canonical address/prefix syntax required')
     except ValueError as error:
         sys.exit(f'Invalid DSH_EXTRA_CLIENT_CIDRS entry {value!r}: {error}')
     if str(network) not in clients:
@@ -60,14 +64,22 @@ values['EXTRA_CLIENT_ALLOW_LINES'] = '\n'.join('    allow ' + client + ';' for c
 text = Path(sys.argv[1]).read_text()
 for key, value in values.items(): text = text.replace('@' + key + '@', value)
 assert not re.search(r'@[A-Z_]+@', text), 'Unresolved nginx parameter'
-# Root executes preparation; private data-only config is never sourced as shell code.
-with approved.open('w') as config:
-    os.fchmod(config.fileno(), 0o600)
-    config.write(''.join(client + '\n' for client in clients))
-Path('/etc/dsh-edge/edge.conf').write_text(text)
-Path('/etc/dsh-edge/nginx.conf').write_text('pid /run/dsh-edge/nginx.pid;\nerror_log stderr;\nevents {}\nhttp {\n include /etc/dsh-edge/edge.conf;\n}\n')
+edge = Path('/etc/dsh-edge/edge.conf')
+wrapper = Path('/etc/dsh-edge/nginx.conf')
+def nginx_config(include):
+    return f'pid /run/dsh-edge/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n include {include};\n}}\n'
+# Validate private candidates before replacing any published configuration.
+with tempfile.TemporaryDirectory(prefix='.prepare-', dir=approved.parent) as directory:
+    candidate = Path(directory)
+    (candidate / 'edge.conf').write_text(text)
+    (candidate / 'nginx.conf').write_text(nginx_config(candidate / 'edge.conf'))
+    subprocess.run(['nginx', '-t', '-c', str(candidate / 'nginx.conf')], check=True)
+    (candidate / 'nginx.conf').write_text(nginx_config(edge))
+    (candidate / 'client-cidrs.conf').write_text(''.join(client + '\n' for client in clients))
+    (candidate / 'client-cidrs.conf').chmod(0o600)
+    for target in (edge, wrapper, approved):
+        os.replace(candidate / target.name, target)
 PY
-  nginx -t -c /etc/dsh-edge/nginx.conf
   echo 'Prepared only. No release promotion, unit installation, restart, or remote client trust.'
   ;;
 activate)

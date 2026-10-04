@@ -78,7 +78,7 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path, extra):
     for name, body in {
         "id": "echo 0",
         "systemctl": 'echo "systemctl $*" >> "$CALLS"; exit 3',
-        "nginx": 'echo "nginx $*" >> "$CALLS"',
+        "nginx": 'echo "nginx $*" >> "$CALLS"; test "${FAIL_NGINX:-0}" = 0',
     }.items():
         p = bindir / name
         p.write_text("#!/bin/sh\n" + body + "\n")
@@ -124,12 +124,21 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path, extra):
     subprocess.run(["bash", str(script), "prepare", str(release), sha], env=env, check=True, capture_output=True)
     assert (tls / "server.key").read_bytes() == before
     assert (tmp_path / "etc/dsh-edge/edge.conf").read_text() == config
-    for invalid in ["10.44.137.3", "10.44.137.0/24", "10.44.137.3/24", "0.0.0.0/0", "::/0",
+    wrapper = tmp_path / "etc/dsh-edge/nginx.conf"
+    published = {path: path.read_bytes() for path in [saved, wrapper, tmp_path / "etc/dsh-edge/edge.conf"]}
+    for invalid in ["::1%x;deny/128", "::1%x;}/128", "fe80::1%eth0/128",
+                    "2001:0db8::1/128", "2001:DB8::1/128", "10.44.137.3/032", "10.44.137.3", "10.44.137.0/24", "10.44.137.3/24", "0.0.0.0/0", "::/0",
                     "not-a-cidr", "10.44.137.3/32;deny all;", "10.44.137.3/32\\nallow all;"]:
         rejected = subprocess.run(["bash", str(script), "prepare", str(release), sha],
                                   env={**env, "DSH_EXTRA_CLIENT_CIDRS": invalid}, capture_output=True)
         assert rejected.returncode != 0, invalid
         assert (tmp_path / "etc/dsh-edge/edge.conf").read_text() == config
-        assert saved.read_text().split() == extra.split()
+        assert {path: path.read_bytes() for path in published} == published
+    rejected = subprocess.run(["bash", str(script), "prepare", str(release), sha],
+                              env={**env, "DSH_EXTRA_CLIENT_CIDRS": "10.44.137.4/32", "FAIL_NGINX": "1"},
+                              capture_output=True)
+    assert rejected.returncode != 0
+    assert {path: path.read_bytes() for path in published} == published
+    assert not list(saved.parent.glob(".prepare-*"))
     result = subprocess.run(["bash", str(script), "prepare", str(release), "b" * 40], env=env, capture_output=True)
     assert result.returncode != 0

@@ -2,6 +2,10 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — VPN admission review correction
+
+Intent: serves. Reproduced the review finding: ipaddress accepts scoped IPv6 strings containing nginx punctuation. Reject scope identifiers and noncanonical address/prefix syntax; validate a private candidate wrapper/include with nginx before publishing any approvals or rendered files. Each replacement is atomic under the existing deployment lock; this is not a multi-file crash transaction. Tests reject the reported punctuation and ordinary scope IDs without changing any published bytes, and simulate nginx validation failure with unchanged approvals/edge/wrapper and candidate cleanup. Parent owns refreshed breaker review and production preparation/reload; no live writes.
+
 ## 2026-10-04 — Exact VPN edge admission
 
 Intent: serves. Query-free live access log shows the approved VPN client's root and favicon requests denied at the edge. Extend only the commissioning renderer with validated explicit host CIDRs from DSH_EXTRA_CLIENT_CIDRS; persist private root-owned data for later preparation, never execute it. Keep LAN admission and deny-all, authority/origin/upgrade checks, credentials and live release unchanged. A separately installed committed tool uses its matching template so the parent can prepare against the existing release without a rebuild or hotpatch. RED: 2 preparation failures; GREEN: 150 focused commissioning/native-nginx tests, including exact measured-client/neighbor CIDR evaluation and analogous real-nginx host admission. Syntax, whitespace and focused bilingual pairing pass. No production preparation, reload, DSH restart, model call or main integration; parent owns independent breaker review and subsequent edge-only activation. Dirty main OPERATIONS is preserved.
