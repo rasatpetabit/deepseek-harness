@@ -248,12 +248,31 @@ def test_browser_admission_rejects_without_reaching_backend(proxy, path, headers
     assert len(proxy.backend.records) == before
 
 
-@pytest.mark.parametrize("origin", [None, "null", "http://" + PUBLIC_AUTHORITY, "https://wrong.invalid"])
+@pytest.mark.parametrize("origin", [None, "", "   ", "\t", "null", "http://" + PUBLIC_AUTHORITY, "https://wrong.invalid"])
 def test_websocket_requires_exact_https_origin(proxy, origin):
     headers = {"Upgrade": "websocket", "Connection": "Upgrade"}
     if origin is not None:
         headers["Origin"] = origin
     assert proxy.request("/api/ws", headers)[0] == 403
+
+
+@pytest.mark.parametrize("path", ["/", "/assets/app.js", "/api"])
+@pytest.mark.parametrize("origin", [None, "", "   "])
+def test_native_nginx_collapses_empty_origin_into_absent(proxy, path, origin):
+    # Characterizes the unresolved design exception, not compliance with supplied-Origin rejection.
+    headers = {} if origin is None else {"Origin": origin}
+    status, _, body = proxy.request(path, headers)
+    assert status == 200
+    assert "Origin" not in json.loads(body)["headers"]
+    assert proxy.request(path, headers, source="127.0.0.1")[0] == 403
+    assert proxy.request(path, {**headers, "Sec-Fetch-Site": "cross-site"})[0] == 403
+
+
+@pytest.mark.parametrize("origin", ["\t", " \t "])
+def test_tab_containing_origin_is_rejected_without_backend_admission(proxy, origin):
+    before = len(proxy.backend.records)
+    assert proxy.request("/", {"Origin": origin})[0] == 403
+    assert len(proxy.backend.records) == before
 
 
 def test_cross_site_upgrade_and_spoofed_lan_identity_are_rejected(proxy):

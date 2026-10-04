@@ -29,7 +29,7 @@
 | `CERTIFICATE_PATH`, `KEY_PATH` | 由操作员证书流程提供的绝对路径 |
 | `ACCESS_LOG_PATH` | 由部署配置提供的日志绝对路径 |
 
-参数是受信任的 nginx 配置，而非用户输入。拒绝未替换的占位符。根路径、静态资源、API、流和升级请求必须共用一个服务器级 ACL 和一个转发 location。公开 Host 必须与不含 `:443` 的 authority 完全一致；任何非空 Origin 必须与 HTTPS origin 完全一致。每个升级请求都必须携带该 Origin，且跨站 Fetch Metadata 被拒绝。
+参数是受信任的 nginx 配置，而非用户输入。拒绝未替换的占位符。根路径、静态资源、API、流和升级请求必须共用一个服务器级 ACL 和一个转发 location。公开 Host 必须与不含 `:443` 的 authority 完全一致。已批准设计要求每个已提供的 Origin 都与 HTTPS origin 完全一致；原生 nginx 无法通过此模板区分未提供与空值。普通请求的空值或仅含空格的 Origin 被视为未提供并获准通过，且 nginx 在上游省略该请求头；含制表符的值被拒绝。这是尚未解决的设计例外，不代表批准放宽要求。每个升级请求仍必须携带精确 HTTPS Origin，且跨站 Fetch Metadata 被拒绝。
 
 <a id="2-verify-the-scratch-edge"></a>
 

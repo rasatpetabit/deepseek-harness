@@ -29,7 +29,7 @@ Use nginx with the HTTP TLS module and `proxy_cookie_flags` support (nginx 1.19.
 | `CERTIFICATE_PATH`, `KEY_PATH` | Absolute paths supplied by the operator's certificate procedure |
 | `ACCESS_LOG_PATH` | Absolute log path supplied by the deployment configuration |
 
-Treat parameters as trusted nginx configuration, not user input. Refuse unresolved placeholders. Preserve the one server-level ACL and one forwarding location for root, assets, API, streams, and upgrades. The public Host must exactly match the authority without `:443`; any nonempty Origin must exactly match the HTTPS origin. Every upgrade requires that Origin, and cross-site Fetch Metadata is rejected.
+Treat parameters as trusted nginx configuration, not user input. Refuse unresolved placeholders. Preserve the one server-level ACL and one forwarding location for root, assets, API, streams, and upgrades. The public Host must exactly match the authority without `:443`. The approved design requires every supplied Origin to exactly match the HTTPS origin; native nginx cannot enforce the absent-versus-empty distinction through this template. Ordinary requests with an empty or spaces-only Origin are admitted as absent, and nginx omits that header upstream; tab-containing values are rejected. This is an unresolved design exception, not approval to weaken the requirement. Every upgrade still requires the exact HTTPS Origin, and cross-site Fetch Metadata is rejected.
 
 <a id="2-verify-the-scratch-edge"></a>
 
