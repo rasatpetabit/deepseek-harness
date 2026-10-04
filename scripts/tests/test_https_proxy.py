@@ -259,7 +259,7 @@ def test_websocket_requires_exact_https_origin(proxy, origin):
 @pytest.mark.parametrize("path", ["/", "/assets/app.js", "/api"])
 @pytest.mark.parametrize("origin", [None, "", "   "])
 def test_native_nginx_collapses_empty_origin_into_absent(proxy, path, origin):
-    # Characterizes the unresolved design exception, not compliance with supplied-Origin rejection.
+    # Ordinary HTTP admits parsed-empty Origin as absent under receipt 5de578ef.
     headers = {} if origin is None else {"Origin": origin}
     status, _, body = proxy.request(path, headers)
     assert status == 200

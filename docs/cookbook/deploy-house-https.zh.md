@@ -4,7 +4,7 @@
 
 ## 概要
 
-准备仅限 LAN 的 nginx 入口，让浏览器在 `https://192.168.100.200` 自动登录，同时不暴露回环后端，也不修改其持久化签名密钥。本流程准备并测试仓库产物；它不授权安装、证书启用、服务重启或激活。[升级协调决策](../../.agents/notes/proposed/architecture/2026-10-04-upstream-reconciliation.zh.md)负责安全策略及尚未确定的证书启用选择。
+准备仅限 LAN 的 nginx 入口，让浏览器在 `https://192.168.100.200` 自动登录，同时不暴露回环后端，也不修改其持久化签名密钥。本流程准备并测试仓库产物；它不授权安装、证书启用、服务重启或激活。[升级协调决策](../../.agents/notes/proposed/architecture/2026-10-04-upstream-reconciliation.zh.md)负责安全策略及投产限制。
 
 ## 目录
 
@@ -29,7 +29,7 @@
 | `CERTIFICATE_PATH`, `KEY_PATH` | 由操作员证书流程提供的绝对路径 |
 | `ACCESS_LOG_PATH` | 由部署配置提供的日志绝对路径 |
 
-参数是受信任的 nginx 配置，而非用户输入。拒绝未替换的占位符。根路径、静态资源、API、流和升级请求必须共用一个服务器级 ACL 和一个转发 location。公开 Host 必须与不含 `:443` 的 authority 完全一致。已批准设计要求每个已提供的 Origin 都与 HTTPS origin 完全一致；原生 nginx 无法通过此模板区分未提供与空值。普通请求的空值或仅含空格的 Origin 被视为未提供并获准通过，且 nginx 在上游省略该请求头；含制表符的值被拒绝。这是尚未解决的设计例外，不代表批准放宽要求。每个升级请求仍必须携带精确 HTTPS Origin，且跨站 Fetch Metadata 被拒绝。
+参数是受信任的 nginx 配置，而非用户输入。拒绝未替换的占位符。根路径、静态资源、API、流和升级请求必须共用一个服务器级 ACL 和一个转发 location。公开 Host 必须与不含 `:443` 的 authority 完全一致。按已审阅的源选择裁定（回执 5de578ef），普通 HTTP 将 nginx 解析后的空 Origin 视为未提供；每个非空解析值必须等于精确 HTTPS origin。nginx 在上游省略空请求头；含制表符的值被拒绝。每个升级请求仍必须携带精确 HTTPS Origin，且跨站 Fetch Metadata 被拒绝。
 
 <a id="2-verify-the-scratch-edge"></a>
 
@@ -49,7 +49,7 @@ DSH_TEST_NGINX=/tmp/dsh-nginx-runtime/usr/sbin/nginx python3 -m pytest -q -s scr
 
 发布操作员在独立审查精确产物后负责这些检查。本指南记录所需证据，不表示生产部署已完成。
 
-1. 确定证书签发者及续期负责人。验证证书 IP SAN 包含已批准的公开 IP、证书链完整、有效期可接受，且每个目标浏览器无需绕过验证即可信任该链。不要以临时证书成功代替此证据。
+1. 若没有可用的车队签发者，按[投产流程](deploy-house-commissioning.zh.md)准备专用私有 CA 和 IP-SAN 服务器证书。使用该 CA 验证服务器证书链及有效期，不得绕过验证。远程浏览器信任需要每台主机的独立授权；缺少客户端信任是已报告的访问限制，不是推迟有效私有 CA HTTPS 服务的理由。
 2. 验证后端仅绑定 `127.0.0.1:3080`，并拒绝直接 LAN 连接。为预期公开 Host 和 HTTPS origin 配置现有浏览器信任策略，受信任回环地址只代表代理一跳。保留持久化浏览器签名密钥及现有凭据；不要生成新的代理密钥。
 3. 在目标隔离运行时配置中使用 `nginx -t` 验证最终生成的配置。使用真实 LAN 和非 LAN 客户端重复允许／拒绝路由检查；确保没有其他监听器、location、继承的 real-IP 指令或 HTTP 回退绕过准入。
 4. 从目标受信任浏览器验证干净 `GET /` 自动设置签名 cookie 并重定向到 `./`、重新加载成功，且无 cookie 的 API 请求失败。验证错误 Host／Origin、HTTP／null Origin、跨站 Fetch Metadata、伪造转发请求头及缺少精确 Origin 的升级请求被拒绝。确认后端收到原始且被接受的公开 Host，而非回环 authority。

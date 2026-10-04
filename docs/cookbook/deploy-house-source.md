@@ -14,7 +14,7 @@ Select one committed worktree for the house deployment script without cleaning, 
 
 ## 1. Select the reviewed source
 
-Provide both `--source <absolute-canonical-worktree>` and `--expected-sha <full-commit-SHA>` to [deploy-dsh.sh](../../scripts/deploy-dsh.sh). The source must be a registered worktree of the owning repository at `/srv/dev/ai/deepseek-harness`; another clone, a symlink alias, a relative path, or a subdirectory is not accepted. The expected SHA must be the exact reviewed commit and match the source HEAD. There is no default source or fallback to main.
+Provide both `--source <absolute-canonical-worktree>` and `--expected-sha <full-commit-SHA>` to [deploy-dsh.sh](../../scripts/deploy-dsh.sh). The source must be a registered worktree of the owning repository at `/srv/dev/ai/deepseek-harness`; another clone, a symlink alias, a relative path, or a subdirectory is not accepted. The expected SHA must be the exact reviewed commit and match the source HEAD. There is no default source or fallback to main. Add `--prepare-only` to retain a confined release with `RELEASE_COMMIT` without promotion, restart or pruning; use the [commissioning procedure](deploy-house-commissioning.md) for exact-release review and activation.
 
 Keep the selected worktree exclusive to the deployment until it finishes. Its index, tracked files, and non-ignored untracked files must be clean before deployment and remain clean after dependency installation, build, and output staging. Ignored generated outputs and worktree-local dependencies are permitted; shared dependency links outside the release fail final confinement. Do not commit or stash operator-owned changes in another checkout to satisfy this requirement.
 

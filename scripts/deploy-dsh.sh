@@ -9,6 +9,7 @@ KEEP_RELEASES=3
 # Source selection is mandatory; the script never falls back to the main checkout.
 SOURCE_ROOT=""
 GIT_SHA=""
+PREPARE_ONLY=0
 while (( $# )); do
   case "$1" in
     --source)
@@ -26,6 +27,10 @@ while (( $# )); do
       fi
       GIT_SHA="$2"
       shift 2
+      ;;
+    --prepare-only)
+      PREPARE_ONLY=1
+      shift
       ;;
     *)
       echo "ERROR: Unknown deployment argument: $1" >&2
@@ -215,6 +220,13 @@ print(f"Production boundary check passed: {checked_links} symlinks strictly veri
 PYEOF
 
 verify_source "before promotion"
+
+if (( PREPARE_ONLY )); then
+  printf '%s\n' "$GIT_SHA" > "$TARGET_DIR/RELEASE_COMMIT"
+  TARGET_CREATED=0
+  echo "Prepared release (not activated): $TARGET_DIR"
+  exit 0
+fi
 
 # Atomic symlink replacement
 TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"

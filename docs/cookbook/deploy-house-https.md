@@ -4,7 +4,7 @@ English | [中文](deploy-house-https.zh.md)
 
 ## Summary
 
-Prepare a LAN-only nginx edge for automatic browser login at `https://192.168.100.200` without exposing the loopback backend or changing its persistent signing secret. This procedure prepares and tests repository artifacts; it does not authorize installation, certificate commissioning, service restart, or activation. The [reconciliation decision](../../.agents/notes/proposed/architecture/2026-10-04-upstream-reconciliation.md) owns the security policy and unresolved commissioning choices.
+Prepare a LAN-only nginx edge for automatic browser login at `https://192.168.100.200` without exposing the loopback backend or changing its persistent signing secret. This procedure prepares and tests repository artifacts; it does not authorize installation, certificate commissioning, service restart, or activation. The [reconciliation decision](../../.agents/notes/proposed/architecture/2026-10-04-upstream-reconciliation.md) owns the security policy and commissioning limits.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Use nginx with the HTTP TLS module and `proxy_cookie_flags` support (nginx 1.19.
 | `CERTIFICATE_PATH`, `KEY_PATH` | Absolute paths supplied by the operator's certificate procedure |
 | `ACCESS_LOG_PATH` | Absolute log path supplied by the deployment configuration |
 
-Treat parameters as trusted nginx configuration, not user input. Refuse unresolved placeholders. Preserve the one server-level ACL and one forwarding location for root, assets, API, streams, and upgrades. The public Host must exactly match the authority without `:443`. The approved design requires every supplied Origin to exactly match the HTTPS origin; native nginx cannot enforce the absent-versus-empty distinction through this template. Ordinary requests with an empty or spaces-only Origin are admitted as absent, and nginx omits that header upstream; tab-containing values are rejected. This is an unresolved design exception, not approval to weaken the requirement. Every upgrade still requires the exact HTTPS Origin, and cross-site Fetch Metadata is rejected.
+Treat parameters as trusted nginx configuration, not user input. Refuse unresolved placeholders. Preserve the one server-level ACL and one forwarding location for root, assets, API, streams, and upgrades. The public Host must exactly match the authority without `:443`. Under the reviewed source-selector adjudication (receipt 5de578ef), ordinary HTTP treats an nginx-parsed empty Origin as absent; every nonempty parsed Origin must equal the exact HTTPS origin. nginx omits empty headers upstream; tab-containing values are rejected. Every upgrade still requires the exact HTTPS Origin, and cross-site Fetch Metadata is rejected.
 
 <a id="2-verify-the-scratch-edge"></a>
 
@@ -49,7 +49,7 @@ The command must report successful nginx syntax validation and passing runtime c
 
 The release operator owns these checks after independent exact-artifact review. This cookbook records required evidence, not a completed production deployment.
 
-1. Resolve issuer selection and certificate renewal ownership. Verify the certificate IP SAN contains the approved public IP, the chain is complete, expiry is acceptable, and each intended browser trusts that chain without a bypass. Do not substitute scratch certificate success for this evidence.
+1. Use the [commissioning procedure](deploy-house-commissioning.md) to prepare a scoped private CA and IP-SAN server certificate when no usable fleet issuer exists. Validate the server chain and expiry with that CA, without a bypass. Remote browser trust requires a separate per-host grant; absent client trust is a reported access limitation, not a reason to delay a valid private-CA HTTPS server.
 2. Verify the backend binds only `127.0.0.1:3080` and refuses direct LAN connections. Configure the existing browser trust policy for the expected public Host and HTTPS origin, with trusted loopback identifying only the proxy hop. Preserve the persisted browser signing secret and existing credentials; do not generate a new proxy secret.
 3. Validate the final rendered configuration with `nginx -t` in its intended isolated runtime configuration. Repeat allowed/denied route checks using actual LAN and off-network clients; ensure no alternate listener, location, inherited real-IP directive, or HTTP fallback bypasses admission.
 4. From an intended trusted browser, verify clean `GET /` automatically sets the signed cookie and redirects `./`, reload succeeds, and API without a cookie fails. Verify wrong Host/Origin, HTTP/null Origin, cross-site Fetch Metadata, forged forwarding headers, and upgrades without the exact Origin are rejected. Confirm the backend receives the original accepted public Host, not its loopback authority.

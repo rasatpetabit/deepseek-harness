@@ -1,0 +1,20 @@
+# Deployment layer; preserves existing credentials and provider configuration.
+- id: webserver
+  config:
+    host: '127.0.0.1'
+    port: 3080
+    compression: gzip
+    compressionLevel: 1
+    compressionThresholdBytes: 1024
+- id: web-runtime
+  config:
+    openBrowser: false
+    printUrl: true
+    allowRemoteAdministration: true
+    publicUrl: 'https://192.168.100.200'
+    surfaceContext: true
+    trustedHosts: ['192.168.100.200']
+- id: connection
+  config:
+    trustedHosts: ['192.168.100.200']
+    trustedNetworks: ['127.0.0.1']

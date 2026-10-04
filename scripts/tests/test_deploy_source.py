@@ -89,6 +89,18 @@ fi
     return dict(repo=repo, source=source, prod=prod, sha=sha, script=script, env=env, calls=calls, tmp=tmp_path)
 
 
+def test_prepare_only_stages_without_promotion_or_restart(deployment):
+    result = _run(deployment, ["--source", str(deployment["source"]), "--expected-sha", deployment["sha"], "--prepare-only"])
+    assert result.returncode == 0, result.stderr
+    assert os.readlink(deployment["prod"] / "current") == "releases/previous"
+    releases = [p for p in (deployment["prod"] / "releases").iterdir() if p.name != "previous"]
+    assert len(releases) == 1
+    assert (releases[0] / "dist" / "index.js").read_text() == "selected output"
+    assert (releases[0] / "RELEASE_COMMIT").read_text().strip() == deployment["sha"]
+    assert "restart" not in deployment["calls"].read_text()
+    assert (deployment["prod"] / "data" / ".credentials.json").read_text() == "protected fixture"
+
+
 def _run(deployment, args=None, **environment):
     if args is None:
         args = ["--source", str(deployment["source"]), "--expected-sha", deployment["sha"]]

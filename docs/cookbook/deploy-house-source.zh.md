@@ -14,7 +14,7 @@
 
 ## 1. Select the reviewed source
 
-向 [deploy-dsh.sh](../../scripts/deploy-dsh.sh) 同时提供 `--source <absolute-canonical-worktree>` 和 `--expected-sha <full-commit-SHA>`。源必须是 `/srv/dev/ai/deepseek-harness` 所属仓库中已登记的工作树；不接受其他克隆、符号链接别名、相对路径或子目录。预期 SHA 必须是确切已审阅提交，并与源 HEAD 相同。没有默认源，也不会回退到主检出。
+向 [deploy-dsh.sh](../../scripts/deploy-dsh.sh) 同时提供 `--source <absolute-canonical-worktree>` 和 `--expected-sha <full-commit-SHA>`。源必须是 `/srv/dev/ai/deepseek-harness` 所属仓库中已登记的工作树；不接受其他克隆、符号链接别名、相对路径或子目录。预期 SHA 必须是确切已审阅提交，并与源 HEAD 相同。没有默认源，也不会回退到主检出。添加 `--prepare-only` 可保留带 `RELEASE_COMMIT` 的隔离版本，而不提升、重启或清理版本；确切版本审阅及激活使用[投产流程](deploy-house-commissioning.zh.md)。
 
 部署完成前，所选工作树必须由部署独占。部署前索引、已跟踪文件和未被忽略的未跟踪文件必须干净，并在依赖安装、构建和输出暂存后保持干净。允许被忽略的生成输出及工作树本地依赖；指向版本目录之外的共享依赖链接会被最终隔离检查拒绝。不得为满足此要求而提交或 stash 其他检出中操作员所有的更改。
 
