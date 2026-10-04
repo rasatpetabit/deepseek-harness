@@ -332,7 +332,7 @@ export class BrowserAuth {
     if (this.isAuthenticated(req)) return true
     // Auto-authenticate clean GET / from configured trusted networks
     const remoteAddress = req.socket?.remoteAddress
-    if (req.method === 'GET' && url.pathname === '/' && authority !== undefined
+    if (req.method === 'GET' && url.pathname === '/' && !req.url?.includes('?') && authority !== undefined
       && isIpInNetworks(remoteAddress, this.trustedNetworks)) {
       this.mintCookieAndRedirect(res, authority)
       return false

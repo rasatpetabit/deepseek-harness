@@ -2,6 +2,10 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — Clean-root authentication
+
+Task 2 regression rejects query-bearing trusted-hop requests, including bare trailing question mark, while retaining token exchange and directory-relative redirect. RED: two new query cases returned 303 instead of 401; GREEN: three focused owners passed 179 tests. Negative cases cover non-GET/non-root, wrong token, off-network/missing socket and forged forwarding headers; positive case verifies loopback exchange, reload, authority binding and unchanged persisted secret. README pair records that loopback identifies only the proxy hop, never the original browser. No edge activation occurred. nginx is not installed on this host, so Task 3 runtime proxy evidence requires a scratch executable, never a live package/service install.
+
 ## 2026-10-04 — Pinned merge candidate
 
 Exact-plan review and spec advisory PASS received from parent (run 487d53b8-ddca-4a1f-867b-8a22eaae40a5). Resumed approved execution; worktree-local dependencies installed with hooks, no shared dependency link. Merged the pinned release named in the plan, resolving seven forecast conflicts: retain target Vite and drop unused unrun; combine remote administration with target publicUrl; preserve cookie exchange with relative redirects; use ConfigForms rather than removed SettingsScope and retain target General slots. The ownerRequestPolicy is conservatively retained pending current external plugin consumer checks; it still requires cookie authentication, never socket-only authorization.

@@ -271,6 +271,53 @@ describe('BrowserAuth', () => {
       .rejects.toThrow(/safe timestamp range/u)
   })
 
+  it.each([
+    ['GET', '/?x=1', '127.0.0.1'],
+    ['GET', '/?', '127.0.0.1'],
+    ['HEAD', '/', '127.0.0.1'],
+    ['POST', '/', '127.0.0.1'],
+    ['GET', '/index.html', '127.0.0.1'],
+    ['GET', '/api', '127.0.0.1'],
+    ['GET', '/?token=wrong', '127.0.0.1'],
+    ['GET', '/', '10.0.0.1'],
+    ['GET', '/', undefined],
+  ])('does not auto-login %s %s from %s despite forwarded headers', async (method, url, remoteAddress) => {
+    const auth = await BrowserAuth.create({}, credentials(new RecordCredentials()), 30, ['127.0.0.1'])
+    const res = response()
+    expect(auth.authorizeIndex({
+      method, url,
+      headers: {
+        host: '192.168.100.200',
+        forwarded: 'for=192.168.100.42',
+        'x-forwarded-for': '127.0.0.1',
+        'x-real-ip': '127.0.0.1',
+      },
+      socket: remoteAddress === undefined ? undefined : { remoteAddress },
+    }, res.value)).toBe(false)
+    expect(res.state.status).toBe(401)
+    expect(res.state.headers?.['set-cookie']).toBeUndefined()
+  })
+
+  it('auto-login through the accepted loopback hop retains authority-bound cookies and credentials', async () => {
+    const store = new RecordCredentials()
+    const owner = {}
+    const auth = await BrowserAuth.create(owner, credentials(store), 30, ['127.0.0.1'])
+    const originalSecret = structuredClone(store.record)
+    const res = response()
+    const req = { method: 'GET', url: '/', headers: { host: '192.168.100.200' }, socket: { remoteAddress: '127.0.0.1' } }
+    expect(auth.authorizeIndex(req, res.value)).toBe(false)
+    expect(res.state.status).toBe(303)
+    expect(res.state.headers?.location).toBe('./')
+    const cookie = res.state.headers?.['set-cookie']?.split(';')[0]
+    const authenticated = { ...req, headers: { ...req.headers, cookie } }
+    expect(auth.authorizeIndex(authenticated, response().value)).toBe(true)
+    expect(auth.isAuthenticated({ ...authenticated, url: '/api' })).toBe(true)
+    expect(auth.isAuthenticated({ headers: { host: 'evil.example', cookie } })).toBe(false)
+    const reopened = await BrowserAuth.create(owner, credentials(store), 30, ['127.0.0.1'])
+    expect(reopened.isAuthenticated(authenticated)).toBe(true)
+    expect(store.record).toEqual(originalSecret)
+  })
+
   it('automatically authenticates requests from trusted networks on GET /', async () => {
     const store = new RecordCredentials()
     const auth = await BrowserAuth.create(
