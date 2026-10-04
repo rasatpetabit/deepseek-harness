@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-04-upstream-reconciliation.md
-2026-10-04-upstream-reconciliation.md: 0f13df0448670b8f1118b2b49ad52258d5870b2b
-2026-10-04-upstream-reconciliation.zh.md: 497e494eb888c8a7195e05a64820d976848cf95f
+2026-10-04-upstream-reconciliation.md: d93951840faa12465f3ae60f260fe31cad4fef7d
+2026-10-04-upstream-reconciliation.zh.md: b932c5954f168f3ded73e417cd1ceea95f1ebe00

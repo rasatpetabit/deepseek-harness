@@ -14,8 +14,8 @@
 
 ## Global Constraints
 
-- 不可变合并目标：dsh-v0.2.1-alpha.1，完整提交 5badb15009ae1756c3afe0ae0cef1faafc290ccc。
-- 源工作树：/srv/dev/ai/deepseek-harness/.worktrees/upgrade-dsh-v0.2.1-alpha.1；基线 master 为 9156b2790607f471dd6862a12b9d22d8be502a12。
+- 不可变合并目标：git rev-parse dsh-v0.2.1-alpha.1^{commit} 解析的完整提交；合并前将其与操作员指定的不可变 SHA 比较。
+- 源工作树：/srv/dev/ai/deepseek-harness/.worktrees/upgrade-dsh-v0.2.1-alpha.1；准备时记录的带注释 safety/pre-upgrade 标签保存原始 master 基线。
 - 逐字节保留主检出的 docs/OPERATIONS.md：SHA-256 a91f2a4dcb3bbce50387436cb4ae0128653ad52b0c6581efce0cf57493575f97。绝不 stash 或提交其他会话的编辑。
 - 公共地址为 https://192.168.100.200 ；nginx server 层 ACL 允许 192.168.100.0/24 并拒绝所有其他客户端；后端为 127.0.0.1:3080。
 - 不增加转发 IP 身份解析器、额外密钥、全局插件兼容绕过或供应商补丁；不轮换凭据、不进行付费推理、不推送上游、不集成 master、不在线激活。

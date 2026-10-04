@@ -14,8 +14,8 @@ English | [中文](2026-10-04-upstream-reconciliation.zh.md)
 
 ## Global Constraints
 
-- Immutable merge target: dsh-v0.2.1-alpha.1, full commit 5badb15009ae1756c3afe0ae0cef1faafc290ccc.
-- Source worktree: /srv/dev/ai/deepseek-harness/.worktrees/upgrade-dsh-v0.2.1-alpha.1; base master is 9156b2790607f471dd6862a12b9d22d8be502a12.
+- Immutable merge target: the full commit resolved by git rev-parse dsh-v0.2.1-alpha.1^{commit}; verify it against the operator-supplied immutable SHA before merging.
+- Source worktree: /srv/dev/ai/deepseek-harness/.worktrees/upgrade-dsh-v0.2.1-alpha.1; the original master base is preserved by the annotated safety/pre-upgrade tag recorded at preparation.
 - Preserve main docs/OPERATIONS.md byte-for-byte: SHA-256 a91f2a4dcb3bbce50387436cb4ae0128653ad52b0c6581efce0cf57493575f97. Never stash or commit another session's edits.
 - Public authority is https://192.168.100.200; server-level nginx ACL allows 192.168.100.0/24 and denies all others; backend is 127.0.0.1:3080.
 - No forwarded-IP identity parser, additional secret, global plugin compatibility bypass, vendor patch, credential rotation, paid inference, upstream push, master integration, or live activation.
