@@ -1,6 +1,34 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-10-04-upstream-reconciliation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-04-upstream-reconciliation.md
-2026-10-04-upstream-reconciliation.md: d93951840faa12465f3ae60f260fe31cad4fef7d
-2026-10-04-upstream-reconciliation.zh.md: b932c5954f168f3ded73e417cd1ceea95f1ebe00
+/dsh-upstream-reconciliation-implementation-plan:
+  en: 7b415f029d3c3b1d
+  zh: 1c7d15a0c1f2ee5c
+/dsh-upstream-reconciliation-implementation-plan/global-constraints:
+  en: 4dd534727d95578b
+  zh: 3384f4b1abc3b620
+/dsh-upstream-reconciliation-implementation-plan/review-focus:
+  en: af09df7792f79395
+  zh: 77e0faea5da091d4
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-1-pinned-merge-and-minimal-house-delta:
+  en: 5bf0baf2c27243f1
+  zh: d0185c205ba90271
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-2-clean-root-automatic-login-on-the-accepted-proxy-hop:
+  en: 50cbc5ef2bf29dda
+  zh: 13f215796cb1e887
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-3-repository-owned-nginx-https-template-and-procedure:
+  en: 34ae55538cf15e4e
+  zh: 31772c3d09790e57
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-4-immutable-source-deployment:
+  en: 5805bc4e4609dffa
+  zh: 24df8350af02038a
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-5-scratch-plugin-migration-catalog-and-rollback-evidence:
+  en: 092899041a41ac61
+  zh: ee5c84a67f81135b
+/dsh-upstream-reconciliation-implementation-plan/review-focus/task-6-exact-artifact-handoff-not-activation:
+  en: 45765809b61673ee
+  zh: 4cad527ba072f34a
+/dsh-upstream-reconciliation-implementation-plan/preparation-disposition:
+  en: 49d457a38e5e261c
+  zh: 7939c02798829897
