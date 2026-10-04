@@ -311,7 +311,7 @@ describe('BrowserAuth', () => {
     const cookie = res.state.headers?.['set-cookie']?.split(';')[0]
     const authenticated = { ...req, headers: { ...req.headers, cookie } }
     expect(auth.authorizeIndex(authenticated, response().value)).toBe(true)
-    expect(auth.isAuthenticated({ ...authenticated, url: '/api' })).toBe(true)
+    expect(auth.isAuthenticated(authenticated)).toBe(true)
     expect(auth.isAuthenticated({ headers: { host: 'evil.example', cookie } })).toBe(false)
     const reopened = await BrowserAuth.create(owner, credentials(store), 30, ['127.0.0.1'])
     expect(reopened.isAuthenticated(authenticated)).toBe(true)

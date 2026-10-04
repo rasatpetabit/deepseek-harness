@@ -2,9 +2,13 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — Build prerequisites and auth test typing
+
+Host Node reports process.features.typescript=false even with experimental stripping enabled, so the target build's explicit prerequisite fails. A scratch npm Node 24 reports strip support; matching official development headers were copied into that scratch toolchain, not into product source or production. Build then exposed an excess test-only url field at the ConnectionTrustRequest call; removed it without changing product behavior. nginx was downloaded/extracted under /tmp without installing or restarting a system service. Task 3 template/runtime tests are still owed. Full build/typecheck remain running or unverified until recorded otherwise; no blanket pre-existing classification is made for documentation failures.
+
 ## 2026-10-04 — Clean-root authentication
 
-Task 2 regression rejects query-bearing trusted-hop requests, including bare trailing question mark, while retaining token exchange and directory-relative redirect. RED: two new query cases returned 303 instead of 401; GREEN: three focused owners passed 179 tests. Negative cases cover non-GET/non-root, wrong token, off-network/missing socket and forged forwarding headers; positive case verifies loopback exchange, reload, authority binding and unchanged persisted secret. README pair records that loopback identifies only the proxy hop, never the original browser. No edge activation occurred. nginx is not installed on this host, so Task 3 runtime proxy evidence requires a scratch executable, never a live package/service install.
+Task 2 regression rejects query-bearing trusted-hop requests, including bare trailing question mark, while retaining token exchange and directory-relative redirect. RED: two new query cases returned 303 instead of 401; GREEN: three focused owners passed 57 tests. Negative cases cover non-GET/non-root, wrong token, off-network/missing socket and forged forwarding headers; positive case verifies loopback exchange, reload, authority binding and unchanged persisted secret. README pair records that loopback identifies only the proxy hop, never the original browser. No edge activation occurred. nginx is not installed on this host, so Task 3 runtime proxy evidence requires a scratch executable, never a live package/service install.
 
 ## 2026-10-04 — Pinned merge candidate
 
