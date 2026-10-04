@@ -2,6 +2,12 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — Pinned merge candidate
+
+Exact-plan review and spec advisory PASS received from parent (run 487d53b8-ddca-4a1f-867b-8a22eaae40a5). Resumed approved execution; worktree-local dependencies installed with hooks, no shared dependency link. Merged the pinned release named in the plan, resolving seven forecast conflicts: retain target Vite and drop unused unrun; combine remote administration with target publicUrl; preserve cookie exchange with relative redirects; use ConfigForms rather than removed SettingsScope and retain target General slots. The ownerRequestPolicy is conservatively retained pending current external plugin consumer checks; it still requires cookie authentication, never socket-only authorization.
+
+Focused merge tests: 86 files, 1146 tests, initially two failures (one stale house SettingsScope test and one gzip test timeout). The stale test now asserts ConfigForms; focused rerun of both owners passed 48 tests. Other 84 files/1144 tests passed on initial run; the timeout is not silently declared fixed. Candidate merge is a durable checkpoint, not activation clearance. Proxy, immutable-source deployment, scratch plugins/data/restoration, broad build/typecheck and final independent artifact acceptance remain owed.
+
 ## 2026-10-04 — Upstream reconciliation preparation
 
 Intent: serves. Recorded the approved design as a proposed bilingual Agent Note and created the exact six-task implementation plan in docs/superpowers/plans. The design PASS does not cover the new plan; independent plan review and spec advisory review are owed to the parent before product edits, installation, or merge. This child cannot launch reviewers. Main remains at its original HEAD; its dirty operations file SHA-256 is a91f2a4dcb3bbce50387436cb4ae0128653ad52b0c6581efce0cf57493575f97. The annotated safety/pre-upgrade tag created at 20261004T184357Z preserves the base. Isolated branch: upgrade/dsh-v0.2.1-alpha.1. Seven content conflicts were confirmed with merge-tree, not a live merge.
