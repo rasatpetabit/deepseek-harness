@@ -21,6 +21,21 @@ sudo bash "$RELEASE/scripts/commission-dsh.sh" prepare "$RELEASE" "$SHA"
 
 不安装远程客户端信任。用 `ca.crt` 验证时 HTTPS 有效；目标浏览器需要按主机独立授权安装 CA。不得根据 `curl --cacert` 声称浏览器信任，不得用 `-k` 验收。
 
+### 不重启 DSH，更新一个精确 VPN 客户端
+
+将 `DSH_EXTRA_CLIENT_CIDRS` 设为以空白分隔的已批准客户端 CIDR，值须来自不含查询参数的入口访问日志或部署配置。每项必须是显式单地址 `/32` 或 `/128`；子网、裸地址及格式错误的输入会失败，且不改变生成的入口配置。省略变量会复用 `/etc/dsh-edge/client-cidrs.conf`；设为空字符串则清除额外客户端。准备验证条目并保存到 root 所有、权限为 0600 的数据文件。现有 LAN 规则及服务器级 deny-all 仍适用于根路径、API 和 WebSocket；Host、Origin 及 cookie 要求不变。
+
+仅修正入口时，将已审阅提交的投产工具及配套模板安装在 `/srv/dev` 之外；不要修改运行版本。`TOOL_SHA` 标识干净且已审阅的工具提交，`RELEASE` 和 `SHA` 标识不变的线上版本。不需要构建：
+
+```sh
+TOOL=/srv/deepseek-harness/tools/edge-$TOOL_SHA
+sudo install -d -m 755 "$TOOL"
+git archive "$TOOL_SHA" scripts/commission-dsh.sh scripts/deploy/nginx-dsh.conf.template | sudo tar -x -C "$TOOL"
+sudo env DSH_EXTRA_CLIENT_CIDRS="$DSH_EXTRA_CLIENT_CIDRS" bash "$TOOL/scripts/commission-dsh.sh" prepare "$RELEASE" "$SHA"
+```
+
+准备复用证书、获取部署锁并运行 `nginx -t`，但不重新加载任何服务。独立审阅生成的配置并获得明确激活授权后，仅重新加载 `dsh-edge.service`，不重启 DSH。从批准的 VPN 客户端验证根路径／cookie 重新加载、API 及 WebSocket 访问、LAN 连续可用、相邻地址拒绝及不变的浏览器准入检查。服务重启使用生成的配置；后续省略变量的准备复用已保存条目。回退此入口修改时，以先前批准的条目（原来没有则为空）准备、验证并仅重新加载入口；不要使用数据迁移回滚操作。
+
 ## 2. Review and activate
 
 审阅确切提交、准备的版本、生成的 nginx 配置、Node 运行时、兼容性／迁移／恢复证据及本回滚流程。记录独立回执；非空字符串是操作员证明，不是自动验证审阅。之后才能运行：

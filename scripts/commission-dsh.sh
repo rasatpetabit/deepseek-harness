@@ -33,14 +33,37 @@ prepare)
   openssl verify -CAfile "$TLS/ca.crt" -verify_ip 192.168.100.200 "$TLS/server.crt"
   openssl x509 -in "$TLS/server.crt" -checkend 2592000 -noout
   install -d -m 755 /etc/dsh-edge /var/log/dsh-edge /run/dsh-edge
-  python3 - "$RELEASE" <<'PY'
-import re, sys
+  # Use the committed tool's matching template, even when preparing an older release.
+  python3 - "$(dirname "$(realpath -e "$0")")/deploy/nginx-dsh.conf.template" <<'PY'
+import ipaddress, os, re, sys
 from pathlib import Path
-release = Path(sys.argv[1])
+approved = Path('/etc/dsh-edge/client-cidrs.conf')
+if approved.is_symlink():
+    sys.exit('Approved client config must not be a symlink')
+raw = os.environ.get('DSH_EXTRA_CLIENT_CIDRS')
+if raw is None:
+    raw = approved.read_text() if approved.exists() else ''
+clients = []
+for value in raw.split():
+    try:
+        if '/' not in value:
+            raise ValueError('explicit CIDR required')
+        network = ipaddress.ip_network(value, strict=True)
+        if network.prefixlen != network.max_prefixlen:
+            raise ValueError('only exact client /32 or /128 permitted')
+    except ValueError as error:
+        sys.exit(f'Invalid DSH_EXTRA_CLIENT_CIDRS entry {value!r}: {error}')
+    if str(network) not in clients:
+        clients.append(str(network))
 values = dict(LISTEN_ADDRESS='192.168.100.200', HTTPS_PORT='443', PUBLIC_AUTHORITY='192.168.100.200', PUBLIC_AUTHORITY_REGEX=r'192\.168\.100\.200', LAN_CIDR='192.168.100.0/24', BACKEND_ADDRESS='127.0.0.1', BACKEND_PORT='3080', CERTIFICATE_PATH='/etc/dsh-edge/tls/server.crt', KEY_PATH='/etc/dsh-edge/tls/server.key', ACCESS_LOG_PATH='/var/log/dsh-edge/access.log')
-text = (release / 'scripts/deploy/nginx-dsh.conf.template').read_text()
+values['EXTRA_CLIENT_ALLOW_LINES'] = '\n'.join('    allow ' + client + ';' for client in clients)
+text = Path(sys.argv[1]).read_text()
 for key, value in values.items(): text = text.replace('@' + key + '@', value)
 assert not re.search(r'@[A-Z_]+@', text), 'Unresolved nginx parameter'
+# Root executes preparation; private data-only config is never sourced as shell code.
+with approved.open('w') as config:
+    os.fchmod(config.fileno(), 0o600)
+    config.write(''.join(client + '\n' for client in clients))
 Path('/etc/dsh-edge/edge.conf').write_text(text)
 Path('/etc/dsh-edge/nginx.conf').write_text('pid /run/dsh-edge/nginx.pid;\nerror_log stderr;\nevents {}\nhttp {\n include /etc/dsh-edge/edge.conf;\n}\n')
 PY

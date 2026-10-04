@@ -63,7 +63,8 @@ def test_exact_exemption_precedes_supported_plugin_install():
     assert "dsh-plugin-subscriptions@0.9.7 --dsh-version 0.2.1-alpha.1 --accept-risk" in text
 
 
-def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path):
+@pytest.mark.parametrize("extra", ["", "10.44.137.3/32"])
+def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path, extra):
     prod = tmp_path / "prod"
     release = prod / "releases" / "candidate"
     (release / "scripts/deploy").mkdir(parents=True)
@@ -82,6 +83,9 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path):
         p = bindir / name
         p.write_text("#!/bin/sh\n" + body + "\n")
         p.chmod(0o755)
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy/nginx-dsh.conf.template").write_text(
+        (ROOT / "scripts/deploy/nginx-dsh.conf.template").read_text())
     script = tmp_path / "commission.sh"
     text = (ROOT / "scripts/commission-dsh.sh").read_text()
     text = text.replace("ROOT=/srv/deepseek-harness", f"ROOT={prod}")
@@ -89,7 +93,8 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path):
     text = text.replace("/var/log/dsh-edge", str(tmp_path / "log"))
     text = text.replace("/run/dsh-edge", str(tmp_path / "run"))
     script.write_text(text)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CALLS": str(calls)}
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CALLS": str(calls),
+           "DSH_EXTRA_CLIENT_CIDRS": extra}
     result = subprocess.run(["bash", str(script), "prepare", str(release), sha], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     tls = tmp_path / "etc/dsh-edge/tls"
@@ -98,12 +103,33 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path):
     config = (tmp_path / "etc/dsh-edge/edge.conf").read_text()
     assert "listen 192.168.100.200:443 ssl" in config
     assert "deny all;" in config
+    assert "allow 192.168.100.0/24;" in config
+    if extra:
+        assert f"allow {extra};" in config
+        assert config.index(f"allow {extra};") < config.index("deny all;")
+        import ipaddress
+        allowed = [ipaddress.ip_network(line.split()[1].rstrip(";"))
+                   for line in config.splitlines() if line.strip().startswith("allow ")]
+        assert any(ipaddress.ip_address("10.44.137.3") in network for network in allowed)
+        assert not any(ipaddress.ip_address("10.44.137.4") in network for network in allowed)
+    saved = tmp_path / "etc/dsh-edge/client-cidrs.conf"
+    assert saved.read_text().split() == extra.split()
+    assert saved.stat().st_mode & 0o777 == 0o600
     assert "@" not in config
     assert "restart" not in calls.read_text()
     assert "enable" not in calls.read_text()
     assert not (prod / "current").exists()
     before = (tls / "server.key").read_bytes()
+    del env["DSH_EXTRA_CLIENT_CIDRS"]
     subprocess.run(["bash", str(script), "prepare", str(release), sha], env=env, check=True, capture_output=True)
     assert (tls / "server.key").read_bytes() == before
+    assert (tmp_path / "etc/dsh-edge/edge.conf").read_text() == config
+    for invalid in ["10.44.137.3", "10.44.137.0/24", "10.44.137.3/24", "0.0.0.0/0", "::/0",
+                    "not-a-cidr", "10.44.137.3/32;deny all;", "10.44.137.3/32\\nallow all;"]:
+        rejected = subprocess.run(["bash", str(script), "prepare", str(release), sha],
+                                  env={**env, "DSH_EXTRA_CLIENT_CIDRS": invalid}, capture_output=True)
+        assert rejected.returncode != 0, invalid
+        assert (tmp_path / "etc/dsh-edge/edge.conf").read_text() == config
+        assert saved.read_text().split() == extra.split()
     result = subprocess.run(["bash", str(script), "prepare", str(release), "b" * 40], env=env, capture_output=True)
     assert result.returncode != 0

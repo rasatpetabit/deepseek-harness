@@ -2,6 +2,10 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — Exact VPN edge admission
+
+Intent: serves. Query-free live access log shows the approved VPN client's root and favicon requests denied at the edge. Extend only the commissioning renderer with validated explicit host CIDRs from DSH_EXTRA_CLIENT_CIDRS; persist private root-owned data for later preparation, never execute it. Keep LAN admission and deny-all, authority/origin/upgrade checks, credentials and live release unchanged. A separately installed committed tool uses its matching template so the parent can prepare against the existing release without a rebuild or hotpatch. RED: 2 preparation failures; GREEN: 150 focused commissioning/native-nginx tests, including exact measured-client/neighbor CIDR evaluation and analogous real-nginx host admission. Syntax, whitespace and focused bilingual pairing pass. No production preparation, reload, DSH restart, model call or main integration; parent owns independent breaker review and subsequent edge-only activation. Dirty main OPERATIONS is preserved.
+
 ## 2026-10-04 — Commissioning snapshot regression
 
 Intent: serves. Dangling profile dependency links must be compared as links, not dereferenced; GNU diff --no-dereference retains file-content and missing/extra-entry verification. Activation checks each systemd unit independently because the combined command succeeds when any unit is active. Original-script RED: 7 failures/1 pass; fixed commissioning tests: 10 pass, including changed link targets, bytes and missing/extra entries. Bash syntax and whitespace checks pass. No release rebuild, plugin mutation, paid call, main dirty operations edit or activation. Commit-copy commissioning tool is separate from the existing e5c5bcbd release identity; parent must review the exact changed script before invoking it. Existing private rollback snapshot stays intact.

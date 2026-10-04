@@ -21,6 +21,21 @@ Set `RELEASE` to the printed prepared directory. Its `RELEASE_COMMIT` must equal
 
 Remote client trust is not installed. HTTPS is valid when verified with `ca.crt`; intended browsers require separately authorized CA installation per host. Never claim browser trust from `curl --cacert`, and never use `-k` for acceptance.
 
+### Update an exact VPN client without restarting DSH
+
+Set `DSH_EXTRA_CLIENT_CIDRS` to whitespace-separated approved client CIDRs sourced from the query-free edge access log or deployment configuration. Every entry must be an explicit single-address `/32` or `/128`; subnets, bare addresses and malformed input fail without changing the rendered edge configuration. Omit the variable to reuse `/etc/dsh-edge/client-cidrs.conf`; set it to an empty string to clear additional clients. Preparation validates and saves the entries in that root-owned mode-0600 data file. The existing LAN rule and server-wide deny-all remain in force for root, API and WebSocket routes; Host, Origin and cookie requirements are unchanged.
+
+For an edge-only correction, install the reviewed committed commissioning tool and its matching template outside `/srv/dev`; do not modify the running release. `TOOL_SHA` identifies the clean reviewed tool commit, while `RELEASE` and `SHA` identify the unchanged live release. No build is needed:
+
+```sh
+TOOL=/srv/deepseek-harness/tools/edge-$TOOL_SHA
+sudo install -d -m 755 "$TOOL"
+git archive "$TOOL_SHA" scripts/commission-dsh.sh scripts/deploy/nginx-dsh.conf.template | sudo tar -x -C "$TOOL"
+sudo env DSH_EXTRA_CLIENT_CIDRS="$DSH_EXTRA_CLIENT_CIDRS" bash "$TOOL/scripts/commission-dsh.sh" prepare "$RELEASE" "$SHA"
+```
+
+Preparation reuses the certificate, takes the deployment lock and runs `nginx -t`, but does not reload any service. After independent review of the rendered configuration and explicit activation authority, reload only `dsh-edge.service`, not DSH. Verify root/cookie reload, API and WebSocket access from the approved VPN client, LAN continuity, neighbor denial and unchanged browser admission checks. Service restarts use the rendered configuration; later preparation without the variable reuses the saved entries. To revert this edge-only change, prepare with the prior approved entries (empty if none), validate and reload only the edge; do not use the data-migration rollback operation.
+
 ## 2. Review and activate
 
 Review the exact commit, prepared release, rendered nginx configuration, Node runtime, compatibility/migration/restore evidence, and this rollback procedure. Record the independent receipt; a nonempty string is an operator attestation, not automatic validation of the review. Only then:

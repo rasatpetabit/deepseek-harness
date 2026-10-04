@@ -1,6 +1,7 @@
 # Render all named parameters, then include this file inside nginx's http block.
 # PUBLIC_AUTHORITY_REGEX is the regex-escaped PUBLIC_AUTHORITY (no scheme/port).
 # LAN_CIDR is the approved client network, never the proxy's loopback network.
+# EXTRA_CLIENT_ALLOW_LINES contains validated exact-client allow directives, or is empty.
 map $http_host $dsh_host_allowed {
     default 0;
     ~^@PUBLIC_AUTHORITY_REGEX@$ 1;
@@ -34,6 +35,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     allow @LAN_CIDR@;
+@EXTRA_CLIENT_ALLOW_LINES@
     deny all;
     if ($dsh_host_allowed = 0) { return 403; }
     if ($dsh_origin_allowed = 0) { return 403; }

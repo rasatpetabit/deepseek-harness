@@ -131,8 +131,8 @@ class Proxy:
             return response.status, dict(response.getheaders()), response.read()
 
 
-@pytest.fixture(scope="module")
-def proxy(tmp_path_factory):
+@pytest.fixture(scope="module", params=["", "127.0.0.2/32"])
+def proxy(tmp_path_factory, request):
     executable = os.environ.get("DSH_TEST_NGINX") or shutil.which("nginx")
     assert executable and Path(executable).is_file(), "Actual nginx is required; set DSH_TEST_NGINX"
     address = _lan_address()
@@ -160,6 +160,7 @@ def proxy(tmp_path_factory):
             port = reservation.getsockname()[1]
             values = {
                 "LISTEN_ADDRESS": address, "HTTPS_PORT": str(port), "LAN_CIDR": LAN_CIDR,
+                "EXTRA_CLIENT_ALLOW_LINES": f"    allow {request.param};" if request.param else "",
                 "PUBLIC_AUTHORITY": PUBLIC_AUTHORITY,
                 "PUBLIC_AUTHORITY_REGEX": re.escape(PUBLIC_AUTHORITY),
                 "CERTIFICATE_PATH": str(directory / "cert.pem"), "KEY_PATH": str(directory / "key.pem"),
@@ -189,6 +190,7 @@ def proxy(tmp_path_factory):
                 env={**child_env, "NGINX": f"{reservation.fileno()};"},
             )
         edge = Proxy(port, address, directory, backend)
+        edge.extra_client = request.param
         deadline = time.monotonic() + 5
         while True:
             assert process.poll() is None, process.communicate()[1]
@@ -215,6 +217,22 @@ def proxy(tmp_path_factory):
         thread.join(timeout=5)
         assert not thread.is_alive(), "Backend teardown did not reach quiescence"
         shutil.rmtree(directory)
+
+
+@pytest.mark.parametrize("path", ROUTES)
+def test_extra_exact_client_and_neighbor_on_every_route(proxy, path):
+    # Loopback /32 exercises native ACL matching without adding the production VPN IP locally.
+    headers = {"Origin": ORIGIN}
+    if path == "/api/ws":
+        headers.update({"Upgrade": "websocket", "Connection": "Upgrade"})
+    if path == "/api/stream":
+        proxy.backend.release_stream.set()
+    expected = (101 if path == "/api/ws" else 200) if proxy.extra_client else 403
+    assert proxy.request(path, headers, source="127.0.0.2")[0] == expected
+    assert proxy.request(path, headers, source="127.0.0.3")[0] == 403
+    for invalid in [{"Host": "wrong.invalid"}, {"Origin": "https://wrong.invalid"},
+                    {"Sec-Fetch-Site": "cross-site"}]:
+        assert proxy.request(path, {**headers, **invalid}, source="127.0.0.2")[0] == 403
 
 
 @pytest.mark.parametrize("path", ROUTES)
