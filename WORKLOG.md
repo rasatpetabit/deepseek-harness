@@ -2,6 +2,10 @@
 
 Only current-month entries are retained here; older entries move to WORKLOG-YYYY-MM.md at month rollover. No earlier entries existed when this record was created.
 
+## 2026-10-04 — Commissioning snapshot regression
+
+Intent: serves. Dangling profile dependency links must be compared as links, not dereferenced; GNU diff --no-dereference retains file-content and missing/extra-entry verification. Activation checks each systemd unit independently because the combined command succeeds when any unit is active. Original-script RED: 7 failures/1 pass; fixed commissioning tests: 10 pass, including changed link targets, bytes and missing/extra entries. Bash syntax and whitespace checks pass. No release rebuild, plugin mutation, paid call, main dirty operations edit or activation. Commit-copy commissioning tool is separate from the existing e5c5bcbd release identity; parent must review the exact changed script before invoking it. Existing private rollback snapshot stays intact.
+
 ## 2026-10-04 — Assembled commissioning candidate
 
 Intent: serves. Integrated Task 4 while preserving both WORKLOG histories. Adopted reviewed parsed-empty ordinary HTTP Origin adjudication (source-selector receipt 5de578ef; proxy receipt 2c4a313f), with exact nonempty/upgrade HTTPS Origin unchanged. Added inert prepare-only release staging and a committed commissioning/rollback procedure; no production activation is authorized before parent exact-release review. Supported profile operations pin subscriptions 0.9.7 with its exact DSH 0.2.1-alpha.1 exemption and Hindsight 0.8.0; no vendor edits or credential rotation. Recovered compatibility evidence remains authoritative: 36 migrations/reopens with predecessors unchanged, 24 child facts, 144 restored files, old boot and exact 25-model catalog preserved. Real Hindsight injection/retention and paid provider output remain unverified.

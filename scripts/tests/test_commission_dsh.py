@@ -1,9 +1,60 @@
-"""Check inert preparation and rejected release identity without live service changes."""
+"""Check preparation, snapshot verification and unit checks without live changes."""
 import os
 import subprocess
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("damage", ["none", "link", "data", "missing", "extra"])
+def test_snapshot_compares_dangling_links_and_data(tmp_path, damage):
+    prod = tmp_path / "prod"
+    data = prod / "data"
+    data.mkdir(parents=True)
+    (data / "state").write_text("persisted data\n")
+    (data / "dependency").symlink_to("missing-package")
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    text = (ROOT / "scripts/commission-dsh.sh").read_text()
+    snapshot = text[text.index('  tar -C "$ROOT" -cpf "$BACKUP/data.tar" data'):text.index('  printf \'%s\\n\' "$RECEIPT"')]
+    # Config capture belongs to a separate snapshot; keep this test data-only.
+    snapshot = "\n".join(line for line in snapshot.splitlines() if '"$BACKUP/config.tar"' not in line)
+    mutations = {
+        "none": ":",
+        "link": 'ln -sfn other-missing-package "$BACKUP/restore-test/data/dependency"',
+        "data": 'printf changed > "$BACKUP/restore-test/data/state"',
+        "missing": 'rm "$BACKUP/restore-test/data/state"',
+        "extra": 'touch "$BACKUP/restore-test/data/extra"',
+    }
+    snapshot = snapshot.replace("  diff ", mutations[damage] + "\n  diff ")
+    env = {**os.environ, "ROOT": str(prod), "BACKUP": str(backup)}
+    result = subprocess.run(["bash", "-euc", snapshot], env=env, capture_output=True, text=True)
+    if damage == "none":
+        assert result.returncode == 0, result.stderr
+        assert not (backup / "restore-test").exists()
+    else:
+        assert result.returncode == 1, result.stderr
+        assert (backup / "restore-test").exists()
+    assert (data / "state").read_text() == "persisted data\n"
+    assert os.readlink(data / "dependency") == "missing-package"
+
+
+@pytest.mark.parametrize("inactive", ["none", "dsh.service", "dsh-edge.service"])
+def test_activation_requires_each_unit_active(tmp_path, inactive):
+    text = (ROOT / "scripts/commission-dsh.sh").read_text()
+    activation = text.split("activate)\n", 1)[1].split("rollback)\n", 1)[0]
+    start = "  for unit in " if "  for unit in " in activation else "  systemctl is-active --quiet dsh.service"
+    checks = activation[activation.index(start):activation.index('  echo "Activated;')]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    systemctl = bindir / "systemctl"
+    systemctl.write_text('#!/bin/sh\nfor unit in "$@"; do\n case "$unit" in dsh.service|dsh-edge.service) [ "$unit" != "$INACTIVE" ] && exit 0 ;; esac\ndone\nexit 3\n')
+    systemctl.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "INACTIVE": inactive}
+    result = subprocess.run(["bash", "-euc", checks], env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) == (inactive == "none")
 
 
 def test_exact_exemption_precedes_supported_plugin_install():

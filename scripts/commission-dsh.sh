@@ -62,7 +62,8 @@ activate)
   tar -C / -cpf "$BACKUP/config.tar" etc/systemd/system/dsh.service etc/systemd/system/dsh.service.d etc/dsh-edge
   mkdir "$BACKUP/restore-test"
   tar -C "$BACKUP/restore-test" -xpf "$BACKUP/data.tar"
-  diff -qr "$ROOT/data" "$BACKUP/restore-test/data" >/dev/null
+  # Compare saved link targets, including dangling profile dependencies, and file data.
+  diff --no-dereference -qr "$ROOT/data" "$BACKUP/restore-test/data" >/dev/null
   rm -rf "$BACKUP/restore-test"
   printf '%s\n' "$RECEIPT" > "$BACKUP/review-receipt"
   echo "Consistent rollback snapshot: $BACKUP"
@@ -77,7 +78,9 @@ activate)
   systemctl daemon-reload
   systemctl start dsh.service
   systemctl enable --now dsh-edge.service
-  systemctl is-active --quiet dsh.service dsh-edge.service
+  for unit in dsh.service dsh-edge.service; do
+    systemctl is-active --quiet "$unit"
+  done
   echo "Activated; now run cookbook acceptance. On any failure rollback with $BACKUP."
   ;;
 rollback)
