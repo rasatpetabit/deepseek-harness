@@ -6,6 +6,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_exact_exemption_precedes_supported_plugin_install():
+    text = (ROOT / "scripts/commission-dsh.sh").read_text()
+    assert text.index("plugin --profile web allow-version") < text.index("plugin --profile web add --save-exact")
+    assert "dsh-plugin-subscriptions@0.9.7 --dsh-version 0.2.1-alpha.1 --accept-risk" in text
+
+
 def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path):
     prod = tmp_path / "prod"
     release = prod / "releases" / "candidate"

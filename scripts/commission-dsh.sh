@@ -68,8 +68,8 @@ activate)
   echo "Consistent rollback snapshot: $BACKUP"
   export PATH="$(dirname "$NODE"):/home/ras/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin"
   # Supported profile operations; never edit plugin vendor files or credential stores.
-  runuser -u ras -- env PATH="$PATH" DSH_HOME="$ROOT/data" "$NODE" "$RELEASE/apps/cli/lib/bin.js" plugin --profile web add --save-exact dsh-plugin-subscriptions@0.9.7 @vectorize-io/hindsight-coding-agents@0.8.0
   runuser -u ras -- env PATH="$PATH" DSH_HOME="$ROOT/data" "$NODE" "$RELEASE/apps/cli/lib/bin.js" plugin --profile web allow-version dsh-plugin-subscriptions@0.9.7 --dsh-version 0.2.1-alpha.1 --accept-risk
+  runuser -u ras -- env PATH="$PATH" DSH_HOME="$ROOT/data" "$NODE" "$RELEASE/apps/cli/lib/bin.js" plugin --profile web add --save-exact dsh-plugin-subscriptions@0.9.7 @vectorize-io/hindsight-coding-agents@0.8.0
   install -m 644 "$RELEASE/scripts/deploy/dsh-runtime.conf" /etc/systemd/system/dsh.service.d/runtime.conf
   install -m 644 "$RELEASE/scripts/deploy/dsh-edge.service" /etc/systemd/system/dsh-edge.service
   ln -s "releases/$(basename "$RELEASE")" "$ROOT/.current-commission"
