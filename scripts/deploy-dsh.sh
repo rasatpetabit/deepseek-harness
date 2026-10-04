@@ -6,6 +6,78 @@ PROD_ROOT="/srv/deepseek-harness"
 RELEASES_DIR="$PROD_ROOT/releases"
 KEEP_RELEASES=3
 
+# Source selection is mandatory; the script never falls back to the main checkout.
+SOURCE_ROOT=""
+GIT_SHA=""
+while (( $# )); do
+  case "$1" in
+    --source)
+      if (( $# < 2 )) || [[ -n "$SOURCE_ROOT" ]]; then
+        echo "ERROR: --source requires one canonical worktree path." >&2
+        exit 1
+      fi
+      SOURCE_ROOT="$2"
+      shift 2
+      ;;
+    --expected-sha)
+      if (( $# < 2 )) || [[ -n "$GIT_SHA" ]]; then
+        echo "ERROR: --expected-sha requires one full commit SHA." >&2
+        exit 1
+      fi
+      GIT_SHA="$2"
+      shift 2
+      ;;
+    *)
+      echo "ERROR: Unknown deployment argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ -z "$SOURCE_ROOT" || ! "$GIT_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+  echo "ERROR: Usage: $0 --source <absolute-canonical-worktree> --expected-sha <full-commit-SHA>" >&2
+  exit 1
+fi
+if [[ "$SOURCE_ROOT" != /* || "$SOURCE_ROOT" != "$(realpath -e -- "$SOURCE_ROOT")" ]]; then
+  echo "ERROR: Source must be an existing absolute canonical worktree path: $SOURCE_ROOT" >&2
+  exit 1
+fi
+OWNER_COMMON=$(git -C "$DEV_ROOT" rev-parse --path-format=absolute --git-common-dir)
+OWNER_COMMON=$(realpath -e -- "$OWNER_COMMON")
+
+# Recheck HEAD, index, tracked and non-ignored untracked source at each phase.
+# Ignored build outputs are copied separately and must pass release confinement.
+verify_source() {
+  local phase="$1" common top registered=0 entry head status
+  top=$(git -C "$SOURCE_ROOT" rev-parse --show-toplevel) || return 1
+  common=$(git -C "$SOURCE_ROOT" rev-parse --path-format=absolute --git-common-dir) || return 1
+  if [[ "$top" != "$SOURCE_ROOT" || "$(realpath -e -- "$common")" != "$OWNER_COMMON" ]]; then
+    echo "ERROR: Source is not a worktree of the owning repository ($phase)." >&2
+    return 1
+  fi
+  while IFS= read -r -d '' entry; do
+    if [[ "$entry" == "worktree $SOURCE_ROOT" ]]; then
+      registered=1
+    fi
+  done < <(git -C "$DEV_ROOT" worktree list --porcelain -z)
+  if (( ! registered )); then
+    echo "ERROR: Source is not a registered worktree ($phase)." >&2
+    return 1
+  fi
+  head=$(git -C "$SOURCE_ROOT" rev-parse --verify HEAD)
+  if [[ "$head" != "$GIT_SHA" ]]; then
+    echo "ERROR: Source HEAD differs from expected SHA ($phase): $head != $GIT_SHA" >&2
+    return 1
+  fi
+  status=$(git -C "$SOURCE_ROOT" status --porcelain --untracked-files=all --ignore-submodules=none)
+  if [[ -n "$status" ]]; then
+    echo "ERROR: Source worktree is dirty ($phase). Commit changes before deploying." >&2
+    printf '%s\n' "$status" >&2
+    return 1
+  fi
+}
+verify_source "before deployment"
+cd "$SOURCE_ROOT"
+
 # Validate that production roots do not resolve into /srv/dev
 PROD_REAL=$(realpath -m "$PROD_ROOT")
 RELEASES_REAL=$(realpath -m "$RELEASES_DIR")
@@ -27,16 +99,6 @@ if ! systemctl cat dsh.service >/dev/null 2>&1; then
   echo "ERROR: dsh.service is not installed on this host; refusing to deploy." >&2
   echo "  This script only restarts an existing unit. Install it first:" >&2
   echo "  docs/superpowers/specs/2026-09-14-deepseek-harness-install-design.md section 2.5" >&2
-  exit 1
-fi
-
-cd "$DEV_ROOT"
-
-# Ensure repository worktree is committed and clean
-GIT_SHA=$(git rev-parse --verify HEAD)
-if ! git diff-index --quiet "$GIT_SHA" -- || [ -n "$(git status --porcelain)" ]; then
-  echo "ERROR: Working tree is dirty or modified. Commit or stash all changes before deploying." >&2
-  git status --porcelain >&2
   exit 1
 fi
 
@@ -71,26 +133,22 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "Reconciling dependencies and rebuilding clean workspace artifacts for $GIT_SHA..."
+verify_source "before install"
 pnpm install --frozen-lockfile
+verify_source "after install"
 pnpm run build
-
-# Verify worktree remained pristine throughout the build
-if ! git diff-index --quiet "$GIT_SHA" --; then
-  echo "ERROR: Tracked source modified during build. Aborting deploy." >&2
-  exit 1
-fi
+verify_source "after build"
 
 echo "Staging DeepSeek Harness release $RELEASE_ID from committed snapshot..."
 mkdir -p "$STAGING_DIR"
 
-# 1. Populate source strictly from clean git archive of HEAD
-git archive HEAD | tar -x -C "$STAGING_DIR"
+# 1. Populate source from the expected immutable commit, not a moving ref.
+git -C "$SOURCE_ROOT" archive "$GIT_SHA" | tar -x -C "$STAGING_DIR"
 
 # 2. Overlay verified build outputs, native addons, and node_modules from workspace.
-#    '.git/' is excluded before '*/' (rsync takes the first match): otherwise the
-#    dev checkout's .git directory skeleton lands in every release.
+#    Exclude .git files and directories before directory/output includes.
 rsync -a \
-  --exclude='.git/' \
+  --exclude='.git' \
   --include='*/' \
   --include='dist/***' \
   --include='lib/***' \
@@ -98,7 +156,8 @@ rsync -a \
   --include='native/***' \
   --include='node_modules/***' \
   --exclude='*' \
-  "$DEV_ROOT/" "$STAGING_DIR/"
+  "$SOURCE_ROOT/" "$STAGING_DIR/"
+verify_source "after staging"
 
 # Move staging into permanent release directory before validation
 if [ -e "$TARGET_DIR" ]; then
@@ -154,6 +213,8 @@ if violations:
 
 print(f"Production boundary check passed: {checked_links} symlinks strictly verified, 100% self-contained in release tree.")
 PYEOF
+
+verify_source "before promotion"
 
 # Atomic symlink replacement
 TEMP_LINK="$PROD_ROOT/.current-tmp-$$-$RANDOM"

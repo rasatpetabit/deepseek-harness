@@ -26,6 +26,8 @@ TLS issuer selection and browser trust remain unresolved commissioning work. The
 
 The deployment script consumes an explicit canonical clean committed source worktree and expected full immutable SHA. It verifies repository identity, source cleanliness including untracked files, and HEAD before and after dependency installation/build, archives that exact SHA, and overlays outputs only from the same source. It retains production confinement and service health checks. Wrong repositories, dirty sources, moving HEAD, and source mutations fail before promotion. It never commits or stashes main-checkout changes to bypass the clean-source requirement.
 
+The [source-selection cookbook](../../../../docs/cookbook/deploy-house-source.md) owns the script arguments and scratch verification procedure. Worktree-local ignored build outputs remain necessary; final confinement rejects external dependency links, and `.git` files and directories are excluded from the output overlay. The selected worktree must have no concurrent writer during deployment. Phase checks detect observed changes but do not provide a filesystem lock against an unrelated writer changing and restoring source between checks.
+
 ## Plugin and data verification
 
 Select newer compatible published plugin versions through scratch-profile runtime tests, not declared peer ranges alone. Installed subscriptions 0.9.2 and Hindsight 0.6.1 are baselines; subscriptions 0.9.7 excludes the target peers and Hindsight 0.8.0 fixes metadata. An exact-version compatibility exemption needs scratch capability evidence and independent review; global bypasses and vendor edits are forbidden.

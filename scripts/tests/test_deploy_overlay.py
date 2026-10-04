@@ -2,7 +2,7 @@
 
 The overlay rsync keeps every directory (`--include='*/'`) so that the
 dist/lib/bin/native/node_modules includes can reach nested paths. Without an
-earlier `--exclude='.git/'`, that rule also recreated the dev checkout's .git
+earlier `.git` exclusion, that rule also recreated the dev checkout's .git
 directory skeleton inside every release, which left each release looking like a
 broken repository (found by the 2026-09-29 backup-litter audit).
 
@@ -18,6 +18,7 @@ Run with:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -29,13 +30,13 @@ def _extract_overlay() -> str:
     """Pull the overlay rsync command out of the installer, verbatim."""
     source = SCRIPT.read_text(encoding="utf-8")
     start = source.index("rsync -a \\\n")
-    end_marker = '"$DEV_ROOT/" "$STAGING_DIR/"\n'
+    end_marker = '"$SOURCE_ROOT/" "$STAGING_DIR/"\n'
     end = source.index(end_marker, start) + len(end_marker)
     return source[start:end]
 
 
 def _run_overlay(dev_root: Path, staging: Path) -> None:
-    env = dict(os.environ, DEV_ROOT=str(dev_root), STAGING_DIR=str(staging))
+    env = dict(os.environ, SOURCE_ROOT=str(dev_root), STAGING_DIR=str(staging))
     subprocess.run(["bash", "-euo", "pipefail", "-c", _extract_overlay()],
                    check=True, env=env)
 
@@ -66,3 +67,13 @@ def test_overlay_never_creates_a_git_directory(tmp_path):
     _run_overlay(dev, staging)
     leaked = [p for p in staging.rglob(".git")]
     assert leaked == [], leaked
+
+
+def test_overlay_excludes_linked_worktree_git_files(tmp_path):
+    dev, staging = _workspace(tmp_path)
+    # Linked worktrees use a .git file rather than a directory.
+    shutil.rmtree(dev / ".git")
+    (dev / ".git").write_text("gitdir: /outside/worktrees/source\n", encoding="utf-8")
+    (dev / "dist" / ".git").write_text("git metadata", encoding="utf-8")
+    _run_overlay(dev, staging)
+    assert not list(staging.rglob(".git"))

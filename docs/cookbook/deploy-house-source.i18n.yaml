@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for deploy-house-source.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/cookbook/deploy-house-source.md
+/select-an-immutable-house-deployment-source:
+  en: e2da4b4a79e11cde
+  zh: a6a45d78693316c2
+/select-an-immutable-house-deployment-source/summary:
+  en: 5c33a5d19f3a59cf
+  zh: c284b76bf68eb7f1
+/select-an-immutable-house-deployment-source/table-of-contents:
+  en: a555d217f6f2a5fa
+  zh: a555d217f6f2a5fa
+/select-an-immutable-house-deployment-source/1-select-the-reviewed-source:
+  en: 11efd986be750e29
+  zh: 1711a0df1c6a5338
+/select-an-immutable-house-deployment-source/2-verify-scratch-deployment-behavior:
+  en: c23e3263345d9787
+  zh: 802d93f3749f4bc7
+/select-an-immutable-house-deployment-source/3-hand-off-for-activation:
+  en: dd67d1004bcf5367
+  zh: 78d7b5b09f0ae600
