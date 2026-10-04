@@ -67,7 +67,7 @@ activate)
   rm -rf "$BACKUP/restore-test"
   printf '%s\n' "$RECEIPT" > "$BACKUP/review-receipt"
   echo "Consistent rollback snapshot: $BACKUP"
-  export PATH="$(dirname "$NODE"):/home/ras/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin"
+  export PATH="$(dirname "$NODE"):/home/ras/.local/share/pnpm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   # Supported profile operations; never edit plugin vendor files or credential stores.
   runuser -u ras -- env PATH="$PATH" DSH_HOME="$ROOT/data" "$NODE" "$RELEASE/apps/cli/lib/bin.js" plugin --profile web allow-version dsh-plugin-subscriptions@0.9.7 --dsh-version 0.2.1-alpha.1 --accept-risk
   runuser -u ras -- env PATH="$PATH" DSH_HOME="$ROOT/data" "$NODE" "$RELEASE/apps/cli/lib/bin.js" plugin --profile web add --save-exact dsh-plugin-subscriptions@0.9.7 @vectorize-io/hindsight-coding-agents@0.8.0
