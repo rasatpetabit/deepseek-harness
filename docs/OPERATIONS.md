@@ -70,14 +70,22 @@ alternative to the browser for either login or Settings.
 
 ## 5. Model Catalog Management (LiteLLM)
 
-The deployment default agent model is `deepseek-official/deepseek-v4.1-flash`
-with `reasoningEffort: high`, and a `DEEPSEEK_API_KEY` reference is stored in
-`.credentials.yaml` — without one that route errors `MISSING_CREDENTIAL` on
-every turn (any token value works against the local vLLM endpoint; store it via
-**Settings → Models**). The `litellm` route serves the same model through the
-local gateway with no credential, but do not add a `reasoningEffort` override
-to `agent-default-model` while the default provider is `litellm`: the pi-ai
-route rejects it (`UNSUPPORTED_REASONING_EFFORT`).
+The deployment default agent model is whatever `$DSH_HOME/settings.yaml` sets
+under `agent-default-model` (`model`, `provider`, `reasoningEffort`). Read that
+file for the live value: it is deployment state, not repo content, so any model
+or effort level written here goes stale. A `DEEPSEEK_API_KEY` reference is
+stored in `.credentials.yaml` — without one the `deepseek-official` route errors
+`MISSING_CREDENTIAL` on every turn (any token value works against the local vLLM
+endpoint; store it via **Settings → Models**). The `litellm` route also serves
+`deepseek-v4.1-flash` through the local gateway and resolves its own
+`LITELLM_API_KEY` reference (populated in `.credentials.yaml`), so removing that
+reference fails the same way. A `reasoningEffort` override on
+`agent-default-model` is accepted only when the **resolved** model supports that
+level: `resolveReasoningLevel` checks `getSupportedThinkingLevels(model)` and the
+pi-ai route rejects anything else (`UNSUPPORTED_REASONING_EFFORT`). The level
+does not have to be declared locally — when `reasoningEfforts` is absent the
+model inherits the installed catalog's reasoning capability and thinking-level
+map, so a catalog-provided level is accepted with no explicit declaration.
 
 The local LiteLLM gateway is registered as a `llm-pi-ai` provider route in
 `/srv/deepseek-harness/data/settings.yaml`. Refresh it with the deployed
@@ -277,11 +285,11 @@ catalog check above: `routableProviders` must list all five. There is **no
 Kimi route** — Kimi models are served through the LiteLLM provider
 (`kimi-k3`, `k3-256k` via the local proxy).
 
-**Credentials.** The plugin keeps one shared `.credentials.json` in
-`DSH_HOME` (`/srv/deepseek-harness/data/.credentials.json`), shared across
+**Credentials.** The plugin keeps one shared `.credentials.yaml` in
+`DSH_HOME` (`/srv/deepseek-harness/data/.credentials.yaml`), shared across
 profiles. Log in per route via the web UI **Settings → Subscriptions** —
 remote settings administration is enabled for the trusted LAN (§5), so this
-works from a VPN browser. Back up `.credentials.json` before any plugin
+works from a VPN browser. Back up `.credentials.yaml` before any plugin
 downgrade.
 
 Also installed: `@vectorize-io/hindsight-coding-agents@0.6.1` (exact pin;
