@@ -125,6 +125,11 @@ def test_prepare_renders_valid_scoped_tls_and_never_activates(tmp_path, extra):
     assert (tls / "server.key").read_bytes() == before
     assert (tmp_path / "etc/dsh-edge/edge.conf").read_text() == config
     wrapper = tmp_path / "etc/dsh-edge/nginx.conf"
+    # Regression (2026-11-02): default temp paths under /var/lib/nginx are read-only under the
+    # unit's ProtectSystem=strict, so nginx -t failed and the edge restart-looped. Every temp
+    # path must sit in the unit's RuntimeDirectory (/run/dsh-edge, remapped to tmp_path/run here).
+    for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        assert f"{kind}_temp_path {tmp_path / 'run'}/" in wrapper.read_text(), kind
     published = {path: path.read_bytes() for path in [saved, wrapper, tmp_path / "etc/dsh-edge/edge.conf"]}
     for invalid in ["::1%x;deny/128", "::1%x;}/128", "fe80::1%eth0/128",
                     "2001:0db8::1/128", "2001:DB8::1/128", "10.44.137.3/032", "10.44.137.3", "10.44.137.0/24", "10.44.137.3/24", "0.0.0.0/0", "::/0",

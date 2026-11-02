@@ -66,8 +66,12 @@ for key, value in values.items(): text = text.replace('@' + key + '@', value)
 assert not re.search(r'@[A-Z_]+@', text), 'Unresolved nginx parameter'
 edge = Path('/etc/dsh-edge/edge.conf')
 wrapper = Path('/etc/dsh-edge/nginx.conf')
+# Temp paths live in the unit's RuntimeDirectory: ProtectSystem=strict makes the
+# package default /var/lib/nginx/* read-only, and nginx -t chowns them to the worker.
+TEMP_PATHS = ''.join(f' {kind}_temp_path /run/dsh-edge/{name};\n' for kind, name in (
+    ('client_body', 'body'), ('proxy', 'proxy'), ('fastcgi', 'fastcgi'), ('uwsgi', 'uwsgi'), ('scgi', 'scgi')))
 def nginx_config(include):
-    return f'pid /run/dsh-edge/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n include {include};\n}}\n'
+    return f'pid /run/dsh-edge/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n{TEMP_PATHS} include {include};\n}}\n'
 # Validate private candidates before replacing any published configuration.
 with tempfile.TemporaryDirectory(prefix='.prepare-', dir=approved.parent) as directory:
     candidate = Path(directory)
